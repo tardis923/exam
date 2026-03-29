@@ -1,0 +1,2181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>监考编排系统</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.tailwindcss.com" async></script>
+<style>
+/* 全局样式 - 按功能区域分组 */
+/* 1. 布局与容器 */
+.dragging { opacity:0.4; }
+.drag-over { background:#dbeafe; border:2px dashed #165DFF; }
+#allGradesContainer { width:1300px !important; margin:0 auto !important; }
+.table-container { width:100% !important; overflow-x:auto !important; }
+.grade-table table { width:100%; border-collapse:collapse; table-layout:fixed; }
+.grade-table td { text-align:center !important; vertical-align:middle !important; }
+
+/* 2. 年级区域样式 */
+.grade-section { 
+    width:100% !important; box-sizing:border-box !important; margin-bottom:16px;
+    border:1px solid #e5e5e5 !important; border-radius:8px !important;
+    padding:10px !important; background-color:#ffffff !important;
+}
+.grade-section.grade-active {
+    border:2px solid #165DFF !important; background-color:#f0f7ff !important;
+}
+
+/* 3. 教师项样式 */
+.teacher-item { display:flex; justify-content:space-between; align-items:center; gap:4px; }
+.teacher-name { flex:1; }
+.remove-btn { color:white; background:red; padding:1px 6px; border-radius:4px; font-size:10px; cursor:pointer; }
+
+/* 4. 表格单元格样式 */
+.slot-name {
+    cursor:move; display:block !important; margin:2px 0 !important;
+    line-height:1.5 !important; white-space:nowrap !important;
+    text-align:center !important;
+}
+.slot-count { font-size:8px; color:#666; margin-left:4px; vertical-align:middle; }
+.empty-cell { background-color: #fff9c4 !important; }
+
+/* 5. 表格头部样式 */
+.table-header-bg { background-color: #1d4ed8 !important; color:white !important; font-weight:bold !important; }
+.table-subheader-bg { background-color: #3b82f6 !important; color:white !important; }
+.teacher-cell-bg { background-color: #f0f7ff !important; }
+
+/* 6. 统计面板样式 */
+.stats-panel { background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px; margin-bottom:10px; font-size:11px; }
+.stats-title { font-weight:bold; text-align:center; margin-bottom:5px; color:#2563eb; }
+.stats-row { display:flex; justify-content:space-between; margin:2px 0; }
+</style>
+</head>
+<body class="bg-gray-50 text-sm">
+<div class="max-w-none mx-auto p-3 relative">
+<h1 class="text-xl font-bold text-center text-blue-600 mb-3">监考编排系统</h1>
+
+<!-- 控制栏 -->
+<div class="flex flex-wrap justify-center items-center gap-3 mb-4 p-2 bg-white rounded shadow">
+  <div class="flex items-center gap-1">
+    <label class="text-xs">最少监考</label>
+    <input type="number" id="minCount" value="3" min="1" max="10" class="w-14 border p-1">
+  </div>
+  <div class="flex items-center gap-1">
+    <label class="text-xs">最大监考</label>
+    <input type="number" id="maxCount" value="6" min="1" max="20" class="w-14 border p-1">
+  </div>
+  <div class="flex items-center gap-1">
+    <label class="text-xs">每考场教师</label>
+    <input type="number" id="perRoomTeacher" value="1" min="1" max="2" class="w-14 border p-1">
+  </div>
+  <button id="autoAll" class="bg-green-600 text-white px-3 py-1 rounded">✅ 自动编排所有年级</button>
+  
+  <label class="bg-teal-600 text-white px-3 py-1 rounded cursor-pointer">
+    📋 导入考试配置
+    <input type="file" id="importExamConfig" accept=".txt" class="hidden">
+  </label>
+
+  <label class="bg-purple-600 text-white px-3 py-1 rounded cursor-pointer">
+    📄 上传样式模板
+    <input type="file" id="uploadTemplate" accept=".xlsx" class="hidden">
+  </label>
+  <button id="exportAllGrades" class="bg-teal-600 text-white px-3 py-1 rounded">📊 自适应导出</button>
+  
+  <button id="clearAllArrangements" class="bg-red-600 text-white px-3 py-1 rounded">🗑️ 清空所有编排</button>
+  <button id="backupAll" class="bg-blue-600 text-white px-3 py-1 rounded">💾 备份全年级</button>
+  <button id="restoreAll" class="bg-purple-600 text-white px-3 py-1 rounded">📂 恢复备份</button>
+  <input type="file" id="restoreFile" accept=".json" class="hidden">
+  
+  <div class="flex items-center gap-2 ml-2 border-l pl-2">
+    <span id="autoSaveStatus" class="text-xs text-gray-500">就绪</span>
+    <button id="manualSave" class="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300" title="立即保存当前编排">💾 立即保存</button>
+    <button id="clearAutoSave" class="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300" title="清除自动保存的数据">🗑️ 清除</button>
+  </div>
+</div>
+
+<!-- 左侧固定教师面板 -->
+<div id="fixedTeacherPanel" class="fixed left-2 top-24 w-64 bg-white p-3 rounded shadow z-50 max-h-[80vh] overflow-y-auto">
+  <div class="stats-panel">
+    <div class="stats-title">📊 全局统计</div>
+    <div class="stats-row">
+      <span class="stats-label">需编排考场数：</span>
+      <span id="totalNeedRooms">0</span>
+    </div>
+    <div class="stats-row">
+      <span class="stats-label">已编排考场数：</span>
+      <span id="totalDoneRooms">0</span>
+    </div>
+    <div class="stats-row">
+      <span class="stats-label">全年级教师总数：</span>
+      <span id="totalTeachers">0</span>
+    </div>
+    <div class="stats-row">
+      <span class="stats-label">平均监考场次：</span>
+      <span id="avgExamTimes">0.0</span>
+    </div>
+  </div>
+
+  <h3 class="font-bold text-center mb-2 text-blue-600" id="currentTeacherTitle">当前：初一 教师</h3>
+  <textarea id="teacherArea" rows="4" class="w-full border p-2 rounded mb-1" placeholder="一行一个名字"></textarea>
+  
+  <div class="flex gap-1 mb-2">
+    <button id="addTeachers" class="flex-1 bg-blue-600 text-white py-1 rounded">导入教师</button>
+    <button id="clearGradeTeachers" class="bg-orange-500 text-white py-1 px-2 rounded">清空</button>
+  </div>
+
+  <div class="flex gap-1 mb-2">
+    <label for="importTxt" class="flex-1 bg-purple-600 text-white py-1 rounded text-center cursor-pointer">
+       📄 导入 .txt 教师表
+    </label>
+    <input type="file" id="importTxt" class="hidden">
+  </div>
+
+  <div class="mt-1 text-xs text-gray-500">教师名单（仅查看和管理）</div>
+  <div id="teacherPool" class="border h-40 overflow-y-auto p-1 mt-1 bg-gray-50"></div>
+  <div class="mt-2">
+    <button id="clearArrangements" class="w-full bg-red-500 text-white py-1 rounded">清空安排</button>
+  </div>
+</div>
+
+<!-- 右侧固定教师总表面板 -->
+<div class="fixed right-2 top-24 w-56 bg-white p-2 rounded shadow z-50" style="height:80vh;">
+  <h3 class="font-bold text-center text-blue-600 mb-2 text-sm">全年级教师总表</h3>
+  <input id="searchAllTeacher" placeholder="搜索教师" class="w-full border p-1 text-sm mb-1">
+  <div class="flex gap-1 mb-1">
+    <select id="filterGrade" class="w-full border p-1 text-sm">
+      <option value="all">全部年级</option>
+      <option value="初一">初一</option>
+      <option value="初二">初二</option>
+      <option value="初三">初三</option>
+      <option value="高一">高一</option>
+      <option value="高二">高二</option>
+      <option value="高三">高三</option>
+    </select>
+  </div>
+  <div class="flex gap-1 mb-1">
+    <select id="sortByCount" class="w-full border p-1 text-sm">
+      <option value="default">默认排序</option>
+      <option value="asc">场次递增</option>
+      <option value="desc">场次递减</option>
+    </select>
+  </div>
+  <div id="allTeacherList" class="border text-sm h-[calc(100%-90px)] overflow-y-auto mt-1 p-1 bg-gray-50"></div>
+</div>
+
+<!-- 核心内容区：所有年级的表格 -->
+<div id="allGradesContainer" class="space-y-8 mt-4 ml-72 mr-64"></div>
+</div>
+
+<script>
+(() => {
+  /* ========== 1. 常量与全局状态 ========== */
+  const GRADE_LIST = ['初一', '初二', '初三', '高一', '高二', '高三'];
+  const Store = {
+    activeGrade: '初一',
+    perRoomTeacher: 1,
+    minCount: 2,
+    maxCount: 6,
+    gradeData: Object.fromEntries(GRADE_LIST.map(g => [g, {
+      enabled: true,
+      teachers: [],
+      examPlan: [],
+      arrangements: [],
+      uiConfig: { rooms: 8, day1: {}, day2: {}, day3: {} }
+    }]))
+  };
+  
+  let userTemplateWB = null;
+  let templateStyle = null;
+  let dragSource = null;
+  
+  /* ========== 2. 工具函数模块 ========== */
+  const Utils = {
+    el: selector => document.querySelector(selector),
+    els: selector => document.querySelectorAll(selector),
+    
+    getWeekday(dateStr) {
+      if (!dateStr) return '';
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return '';
+      const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+      return `星期${weekdays[date.getDay()]}`;
+    },
+    
+    formatDateWithWeekday(dateStr) {
+      if (!dateStr) return '';
+      const weekday = this.getWeekday(dateStr);
+      return weekday ? `${dateStr}(${weekday})` : dateStr;
+    },
+    
+    formatTime(date) {
+      return date.toLocaleTimeString('zh-CN', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    },
+    
+    getTeacherExamCount(teacherName) {
+      let count = 0;
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].arrangements.forEach(a => {
+          if (a.teachers.includes(teacherName)) count++;
+        });
+      });
+      return count;
+    },
+    
+    getAllTeachers() {
+      const teachers = new Set();
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].teachers.forEach(t => teachers.add(t));
+      });
+      return teachers;
+    },
+    
+    isTeacherBusy(teacherName, date, time) {
+      return GRADE_LIST.some(g =>
+        Store.gradeData[g].arrangements.some(a =>
+          a.date === date && a.time === time && a.teachers.includes(teacherName)
+        )
+      );
+    },
+    
+    findArrangement(grade, date, time, room) {
+      return Store.gradeData[grade].arrangements.find(a => 
+        a.date === date && a.time === time && a.room == room
+      );
+    }
+  };
+  
+  /* ========== 3. 自动保存管理器 ========== */
+  const AutoSaveManager = {
+    timer: null,
+    isSaving: false,
+    unsavedChanges: false,
+    lastSavedHash: '',
+    
+    start(interval = 30000) {
+      if (this.timer) clearInterval(this.timer);
+      this.timer = setInterval(() => {
+        if (this.shouldSave()) this.performSave();
+      }, interval);
+    },
+    
+    stop() {
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    },
+    
+    shouldSave() {
+      if (this.isSaving || !this.unsavedChanges) return false;
+      const currentData = JSON.stringify(Store);
+      return currentData && currentData !== '{}';
+    },
+    
+    performSave() {
+      if (this.isSaving) return;
+      this.isSaving = true;
+      this.unsavedChanges = false;
+      
+      try {
+        const currentData = JSON.stringify(Store);
+        const currentHash = btoa(encodeURIComponent(currentData)).substring(0, 32);
+        
+        if (currentHash === this.lastSavedHash) {
+          this.isSaving = false;
+          return;
+        }
+        
+        localStorage.setItem('examArrangement_autoSave', currentData);
+        localStorage.setItem('examArrangement_saveTime', new Date().toISOString());
+        this.lastSavedHash = currentHash;
+        
+        const timeStr = Utils.formatTime(new Date());
+        this.updateStatus(`✅ 已自动保存 ${timeStr}`);
+      } catch (error) {
+        console.error('自动保存失败：', error);
+        this.updateStatus('❌ 自动保存失败');
+      } finally {
+        this.isSaving = false;
+      }
+    },
+    
+    triggerManualSave() {
+      this.unsavedChanges = true;
+      this.performSave();
+    },
+    
+    markUnsaved() {
+      if (!this.unsavedChanges) {
+        this.unsavedChanges = true;
+        this.updateStatus('* 有未保存的更改');
+      }
+    },
+    
+    updateStatus(message) {
+      const statusEl = Utils.el('#autoSaveStatus');
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.style.color = message.includes('✅') ? '#10b981' : 
+                               message.includes('❌') ? '#ef4444' : 
+                               message.includes('*') ? '#f59e0b' : '#6b7280';
+      }
+    },
+    
+    checkAndRestore() {
+      try {
+        const savedData = localStorage.getItem('examArrangement_autoSave');
+        if (!savedData) return false;
+        
+        const parsedData = JSON.parse(savedData);
+        if (!parsedData || !parsedData.gradeData) return false;
+        
+        const savedTime = localStorage.getItem('examArrangement_saveTime');
+        const timeStr = savedTime ? new Date(savedTime).toLocaleString('zh-CN') : '未知时间';
+        
+        if (confirm(`发现自动保存的数据（${timeStr}），是否恢复？`)) {
+          Object.assign(Store, parsedData);
+          
+          GRADE_LIST.forEach(g => UIRenderer.loadUIConfig(g));
+          UIRenderer.renderAllTables();
+          UIRenderer.renderTeacherPool();
+          UIRenderer.refreshAllTeacherPanel();
+          UIRenderer.initDateWeekdayDisplay();
+          UIRenderer.updateCurrentGradeTeacherCount();
+          UIRenderer.updateGlobalStats();
+          
+          Utils.els('.grade-section').forEach(s => s.classList.remove('grade-active'));
+          const activeSec = Utils.el(`.grade-section[data-grade="${Store.activeGrade}"]`);
+          if (activeSec) activeSec.classList.add('grade-active');
+          UIRenderer.setActiveGradeUI(Store.activeGrade);
+          
+          this.updateStatus(`✅ 已恢复 ${timeStr}`);
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error('恢复自动保存数据失败：', error);
+        return false;
+      }
+    },
+    
+    clearData() {
+      if (confirm('确定要清除自动保存的数据吗？这将删除之前自动保存的编排状态。')) {
+        localStorage.removeItem('examArrangement_autoSave');
+        localStorage.removeItem('examArrangement_saveTime');
+        this.lastSavedHash = '';
+        this.unsavedChanges = false;
+        this.updateStatus('🗑️ 自动保存数据已清除');
+      }
+    }
+  };
+  
+  /* ========== 4. UI渲染器 ========== */
+  const UIRenderer = {
+    renderAllTables() {
+      GRADE_LIST.forEach(g => this.renderGradeTable(g));
+    },
+    
+    renderGradeTable(grade) {
+      const sec = Utils.els('.grade-section')[GRADE_LIST.indexOf(grade)];
+      const wrap = sec.querySelector('.grade-table');
+      const gd = Store.gradeData[grade];
+      const plan = gd.examPlan;
+      const rooms = +sec.querySelector('.grade-rooms').value || 8;
+      
+      if (!plan.length) {
+        wrap.innerHTML = '';
+        return;
+      }
+      
+      const dateMap = {};
+      plan.forEach(p => {
+        if (!dateMap[p.date]) dateMap[p.date] = [];
+        p.subs.forEach(s => dateMap[p.date].push({sub: s.sub, time: s.time}));
+      });
+      
+      const dates = Object.keys(dateMap).slice(0, 3);
+      
+      let html = `<div style="width:100%"><table style="width:100%;border-collapse:collapse;table-layout:fixed;"><colgroup><col style="width:8%">`;
+      
+      dates.forEach(d => {
+        const items = dateMap[d] || [];
+        const colsPerDay = Math.max(items.length, 1);
+        const colWidth = 30.66 / colsPerDay;
+        for (let i = 0; i < colsPerDay; i++) {
+          html += `<col style="width:${colWidth}%">`;
+        }
+      });
+      
+      html += `</colgroup><tr class="text-center"><td style="border:1px solid #ccc;padding:8px;" class="table-header-bg">考场</td>`;
+      
+      dates.forEach(d => {
+        const items = dateMap[d] || [];
+        const colSpan = Math.max(items.length, 1);
+        html += `<td colspan="${colSpan}" style="border:1px solid #ccc;padding:8px;" class="table-header-bg">${Utils.formatDateWithWeekday(d)}</td>`;
+      });
+      
+      html += `</tr><tr class="text-xs text-center"><td style="border:1px solid #ccc;padding:6px;" class="table-subheader-bg"></td>`;
+      
+      dates.forEach(d => {
+        const items = dateMap[d] || [];
+        items.forEach(it => {
+          html += `<td style="border:1px solid #ccc;padding:6px;" class="table-subheader-bg">${it.time}<br>${it.sub}</td>`;
+        });
+        if (items.length === 0) {
+          html += `<td style="border:1px solid #ccc;padding:6px;" class="table-subheader-bg"></td>`;
+        }
+      });
+      
+      html += `</tr>`;
+      
+      for (let r = 1; r <= rooms; r++) {
+        html += `<tr class="text-center"><td style="border:1px solid #ccc;padding:8px;font-weight:bold;" class="table-subheader-bg">${r}</td>`;
+        
+        dates.forEach(d => {
+          const items = dateMap[d] || [];
+          items.forEach(it => {
+            const item = Utils.findArrangement(grade, d, it.time, r);
+            const cellId = `cell_${grade}_${d}_${it.time}_${r}`;
+            const cellClass = item ? 'teacher-cell-bg' : 'empty-cell';
+            
+            html += `<td id="${cellId}" style="border:1px solid #ccc;padding:8px;" class="cell-drop-zone ${cellClass}" data-grade="${grade}" data-date="${d}" data-time="${it.time}" data-room="${r}">`;
+            
+            if (item && item.teachers.length > 0) {
+              const teachersHtml = item.teachers.map(name => 
+                `<span class="slot-name" draggable="true" data-name="${name}" data-grade="${grade}" data-date="${d}" data-time="${it.time}" data-room="${r}">${name}<span class="slot-count">(${Utils.getTeacherExamCount(name)})</span></span>`
+              ).join('');
+              html += teachersHtml;
+            } else {
+              html += `&nbsp;`;
+            }
+            
+            html += `</td>`;
+          });
+          
+          if (items.length === 0) {
+            html += `<td style="border:1px solid #ccc;padding:8px;" class="empty-cell"></td>`;
+          }
+        });
+        
+        html += `</tr>`;
+      }
+      
+      html += `</table></div>`;
+      wrap.innerHTML = html;
+      DragDropManager.bindGradeDrag(grade);
+    },
+    
+    renderTeacherPool() {
+      const grade = Store.activeGrade;
+      const gd = Store.gradeData[grade];
+      const box = Utils.el('#teacherPool');
+      box.innerHTML = '';
+      
+      gd.teachers.forEach((teacher, index) => {
+        const div = document.createElement('div');
+        div.className = 'teacher-item border p-1 rounded my-1';
+        div.innerHTML = `<span class="teacher-name">${teacher}</span><span class="remove-btn">×</span>`;
+        
+        // 修复后的删除处理逻辑
+        div.querySelector('.remove-btn').onclick = () => {
+          if (!confirm(`确定要删除教师【${teacher}】吗？这将从所有年级中移除该教师。`)) return;
+          
+          // 1. 从所有年级的教师列表中删除
+          GRADE_LIST.forEach(g => {
+            const gradeTeachers = Store.gradeData[g].teachers;
+            const teacherIndex = gradeTeachers.indexOf(teacher);
+            if (teacherIndex > -1) {
+              gradeTeachers.splice(teacherIndex, 1);
+            }
+          });
+          
+          // 2. 从所有年级的安排中删除
+          GRADE_LIST.forEach(g => {
+            const gradeData = Store.gradeData[g];
+            // 从每个安排中过滤掉该教师
+            gradeData.arrangements.forEach(arrangement => {
+              arrangement.teachers = arrangement.teachers.filter(t => t !== teacher);
+            });
+            // 清理完全没有教师的空安排
+            gradeData.arrangements = gradeData.arrangements.filter(arr => arr.teachers.length > 0);
+          });
+          
+          // 3. 更新所有UI组件
+          this.renderTeacherPool();
+          this.renderAllTables();
+          this.refreshAllTeacherPanel();
+          this.updateGlobalStats();
+          this.updateCurrentGradeTeacherCount();
+          AutoSaveManager.markUnsaved();
+        };
+        
+        box.appendChild(div);
+      });
+    },
+    
+    refreshAllTeacherPanel() {
+      const box = Utils.el('#allTeacherList');
+      const keyword = Utils.el('#searchAllTeacher').value.toLowerCase().trim();
+      const filterGrade = Utils.el('#filterGrade').value;
+      const sortBy = Utils.el('#sortByCount').value;
+      box.innerHTML = '';
+      
+      const teacherSet = new Set();
+      const list = [];
+      
+      GRADE_LIST.forEach(g => {
+        if (filterGrade !== 'all' && filterGrade !== g) return;
+        Store.gradeData[g].teachers.forEach(t => {
+          if (t.toLowerCase().includes(keyword) && !teacherSet.has(t)) {
+            teacherSet.add(t);
+            const examCount = Utils.getTeacherExamCount(t);
+            const arrangedGrades = GRADE_LIST.filter(gg => 
+              Store.gradeData[gg].arrangements.some(a => a.teachers.includes(t))
+            ).map(gg => GRADE_LIST.indexOf(gg) + 7);
+            
+            list.push({
+              name: t,
+              count: examCount,
+              grade: g,
+              arrangedGrades: arrangedGrades
+            });
+          }
+        });
+      });
+      
+      if (sortBy === 'asc') list.sort((a, b) => a.count - b.count);
+      else if (sortBy === 'desc') list.sort((a, b) => b.count - a.count);
+      
+      list.forEach(item => {
+        const gradeStr = item.arrangedGrades.length > 0 ? 
+          `<span style="color:red; font-weight:bold; margin:0 3px;">[${item.arrangedGrades.join(',')}]</span>` : '';
+        
+        const div = document.createElement('div');
+        div.className = 'border p-1 my-1 rounded text-xs flex justify-between cursor-move';
+        div.draggable = true;
+        div.innerHTML = `<span>${item.name}</span><span>${gradeStr}<span class="text-blue-600">总场次：${item.count}</span></span>`;
+        
+        div.ondragstart = e => {
+          e.dataTransfer.setData('teacher', item.name);
+          e.dataTransfer.setData('sourceType', 'rightPanel');
+          div.classList.add('dragging');
+          this.clearAllHighlights();
+          this.highlightTeacherCells(item.name);
+        };
+        
+        div.ondragend = () => {
+          div.classList.remove('dragging');
+          Utils.els('.drag-over').forEach(x => x.classList.remove('drag-over'));
+          this.clearAllHighlights();
+        };
+        
+        box.appendChild(div);
+      });
+    },
+    
+    updateGlobalStats() {
+      let needRooms = 0;
+      Utils.els('.grade-section').forEach(sec => {
+        const grade = sec.dataset.grade;
+        const gd = Store.gradeData[grade];
+        if (!gd.enabled) return;
+        
+        const rooms = +sec.querySelector('.grade-rooms').value || 0;
+        if (rooms <= 0) return;
+        
+        let subCount = 0;
+        [1, 2, 3].forEach(day => {
+          const subs = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-sub]`);
+          const times = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-time]`);
+          for (let i = 0; i < 4; i++) {
+            const sub = subs[i]?.value?.trim();
+            const time = times[i]?.value?.trim();
+            if (sub && time) subCount++;
+          }
+        });
+        
+        needRooms += subCount * rooms;
+      });
+      
+      let doneRooms = 0;
+      GRADE_LIST.forEach(g => {
+        doneRooms += Store.gradeData[g].arrangements.filter(a => a.teachers.length > 0).length;
+      });
+      
+      const allTeachers = Utils.getAllTeachers();
+      const teacherCounts = {};
+      allTeachers.forEach(t => teacherCounts[t] = 0);
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].arrangements.forEach(a => {
+          a.teachers.forEach(t => {
+            if (teacherCounts[t] !== undefined) teacherCounts[t]++;
+          });
+        });
+      });
+      
+      const totalCount = Object.values(teacherCounts).reduce((a, b) => a + b, 0);
+      const avgTimes = allTeachers.size ? (totalCount / allTeachers.size).toFixed(1) : "0.0";
+      
+      Utils.el('#totalNeedRooms').textContent = needRooms;
+      Utils.el('#totalDoneRooms').textContent = doneRooms;
+      Utils.el('#totalTeachers').textContent = allTeachers.size;
+      Utils.el('#avgExamTimes').textContent = avgTimes;
+    },
+    
+    updateCurrentGradeTeacherCount() {
+      const grade = Store.activeGrade;
+      const teacherCount = Store.gradeData[grade].teachers.length;
+      Utils.el('#currentTeacherTitle').textContent = `当前：${grade} 教师 ${teacherCount}人`;
+    },
+    
+    setActiveGradeUI(grade) {
+      Store.activeGrade = grade;
+      this.updateCurrentGradeTeacherCount();
+      this.renderTeacherPool();
+    },
+    
+    initDateWeekdayDisplay() {
+      Utils.els('input[type="date"]').forEach(input => {
+        let weekdaySpan = input.nextElementSibling;
+        if (!weekdaySpan || !weekdaySpan.classList.contains('weekday-display')) {
+          weekdaySpan = document.createElement('span');
+          weekdaySpan.className = 'weekday-display ml-2 text-blue-600 text-sm';
+          input.parentNode.insertBefore(weekdaySpan, input.nextSibling);
+        }
+        weekdaySpan.textContent = Utils.getWeekday(input.value) ? `(${Utils.getWeekday(input.value)})` : '';
+        
+        const handleDateChange = function() {
+          weekdaySpan.textContent = Utils.getWeekday(this.value) ? `(${Utils.getWeekday(this.value)})` : '';
+        };
+        
+        input.removeEventListener('change', handleDateChange);
+        input.removeEventListener('input', handleDateChange);
+        input.addEventListener('change', handleDateChange);
+        input.addEventListener('input', handleDateChange);
+      });
+    },
+    
+    highlightTeacherCells(teacherName) {
+      Utils.els('.slot-name').forEach(cell => {
+        if (cell.textContent.trim().startsWith(teacherName)) {
+          cell.style.backgroundColor = '#ffeb3b';
+          cell.style.fontWeight = 'bold';
+          cell.style.border = '2px solid #ff9800';
+          cell.style.borderRadius = '3px';
+          cell.dataset.highlighted = 'true';
+        }
+      });
+    },
+    
+    clearAllHighlights() {
+      Utils.els('.slot-name[data-highlighted="true"]').forEach(cell => {
+        cell.style.backgroundColor = '';
+        cell.style.fontWeight = '';
+        cell.style.border = '';
+        cell.style.borderRadius = '';
+        delete cell.dataset.highlighted;
+      });
+    },
+    
+    saveUIConfig(grade) {
+      const sec = Utils.el(`.grade-section[data-grade="${grade}"]`);
+      const cfg = Store.gradeData[grade].uiConfig;
+      cfg.rooms = +sec.querySelector('.grade-rooms').value || 8;
+      
+      [1, 2, 3].forEach(day => {
+        const dayInput = sec.querySelector(`[data-day="${day}"]`);
+        const subs = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-sub]`);
+        const times = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-time]`);
+        cfg[`day${day}`] = {
+          date: dayInput.value,
+          subs: Array.from(subs).map(i => i.value),
+          times: Array.from(times).map(i => i.value)
+        };
+      });
+    },
+    
+    loadUIConfig(grade) {
+      const sec = Utils.el(`.grade-section[data-grade="${grade}"]`);
+      const cfg = Store.gradeData[grade].uiConfig;
+      sec.querySelector('.grade-rooms').value = cfg.rooms || 8;
+      
+      [1, 2, 3].forEach(day => {
+        const d = cfg[`day${day}`];
+        if (!d) return;
+        const dayInput = sec.querySelector(`[data-day="${day}"]`);
+        const subs = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-sub]`);
+        const times = sec.querySelectorAll(`[data-day="${day}"] ~ div [data-time]`);
+        dayInput.value = d.date || '';
+        d.subs.forEach((v, i) => subs[i] && (subs[i].value = v));
+        d.times.forEach((v, i) => times[i] && (times[i].value = v));
+      });
+    }
+  };
+  
+  /* ========== 5. 拖拽管理器（修复版） ========== */
+  const DragDropManager = {
+    bindGradeDrag(grade) {
+      const cells = Utils.els(`[data-grade="${grade}"].cell-drop-zone`);
+      const nameElements = Utils.els('.slot-name');
+      
+      cells.forEach(cell => {
+        cell.ondragover = e => {
+          e.preventDefault();
+          cell.classList.add('drag-over');
+        };
+        
+        cell.ondragleave = () => {
+          cell.classList.remove('drag-over');
+        };
+        
+        cell.ondrop = e => this.handleCellDrop(e, cell);
+      });
+      
+      nameElements.forEach(nameElement => {
+        nameElement.ondragstart = e => this.handleTeacherDragStart(e, nameElement);
+        nameElement.ondragend = () => this.handleTeacherDragEnd(nameElement);
+      });
+    },
+    
+    handleCellDrop(e, cell) {
+      e.preventDefault();
+      cell.classList.remove('drag-over');
+      
+      const teacherName = e.dataTransfer.getData('teacher');
+      const sourceType = e.dataTransfer.getData('sourceType');
+      const targetGrade = cell.dataset.grade;
+      const targetDate = cell.dataset.date;
+      const targetTime = cell.dataset.time;
+      const targetRoom = cell.dataset.room;
+      
+      if (!targetGrade || !targetDate || !targetTime || !targetRoom) return;
+      
+      const per = +Utils.el('#perRoomTeacher').value || 1;
+      const targetGd = Store.gradeData[targetGrade];
+      
+      if (sourceType === 'slotName' && dragSource) {
+        this.handleMoveBetweenCells(dragSource, {targetGrade, targetDate, targetTime, targetRoom});
+      } else if (sourceType === 'rightPanel' && teacherName) {
+        this.handleAddFromPanel(teacherName, {targetGrade, targetDate, targetTime, targetRoom}, per);
+      }
+      
+      UIRenderer.renderAllTables();
+      UIRenderer.renderTeacherPool();
+      UIRenderer.refreshAllTeacherPanel();
+      UIRenderer.updateGlobalStats();
+      AutoSaveManager.markUnsaved();
+      
+      setTimeout(() => {
+        DragDropManager.bindGradeDrag(targetGrade);
+        if (teacherName) UIRenderer.highlightTeacherCells(teacherName);
+      }, 10);
+    },
+    
+    // 修复后的handleMoveBetweenCells函数
+    handleMoveBetweenCells(source, target) {
+      const sourceGd = Store.gradeData[source.grade];
+      const targetGd = Store.gradeData[target.targetGrade];
+      
+      const sourceArr = sourceGd.arrangements.find(a => 
+        a.date === source.date && a.time === source.time && a.room == source.room
+      );
+      
+      if (!sourceArr || !sourceArr.teachers.includes(source.name)) return;
+      
+      if (source.grade === target.targetGrade && source.date === target.targetDate && 
+          source.time === target.targetTime && source.room == target.targetRoom) {
+        return;
+      }
+      
+      const targetArr = targetGd.arrangements.find(a => 
+        a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
+      );
+      
+      if (targetArr && targetArr.teachers.length > 0) {
+        // 获取目标单元格的第一位教师
+        const targetTeacher = targetArr.teachers[0];
+        
+        // 修复点1：检查是否是同一个人
+        if (source.name === targetTeacher) {
+          // 同一个人，不执行任何操作
+          return;
+        }
+        
+        // 修复点2：检查源教师在目标时间是否已有安排
+        if (Utils.isTeacherBusy(source.name, target.targetDate, target.targetTime)) {
+          alert(`教师【${source.name}】此时段已有安排！`);
+          return;
+        }
+        
+        // 修复点3：检查目标教师在源时间是否已有安排
+        if (Utils.isTeacherBusy(targetTeacher, source.date, source.time)) {
+          alert(`教师【${targetTeacher}】此时段已有安排！`);
+          return;
+        }
+        
+        // 交换逻辑
+        sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
+        targetArr.teachers = targetArr.teachers.filter(t => t !== targetTeacher);
+        
+        if (targetArr.teachers.length === 0) {
+          targetArr.teachers = [source.name];
+        } else {
+          targetArr.teachers.push(source.name);
+        }
+        
+        if (sourceArr.teachers.length === 0) {
+          sourceArr.teachers = [targetTeacher];
+        } else {
+          sourceArr.teachers.push(targetTeacher);
+        }
+      } else {
+        // 修复点4：检查移动时目标时间是否冲突
+        if (Utils.isTeacherBusy(source.name, target.targetDate, target.targetTime)) {
+          alert(`教师【${source.name}】此时段已有安排！`);
+          return;
+        }
+        
+        // 从源位置移除
+        sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
+        
+        if (sourceArr.teachers.length === 0) {
+          const sourceIndex = sourceGd.arrangements.indexOf(sourceArr);
+          if (sourceIndex > -1) sourceGd.arrangements.splice(sourceIndex, 1);
+        }
+        
+        if (!targetArr) {
+          const newArr = { 
+            date: target.targetDate, 
+            time: target.targetTime, 
+            room: parseInt(target.targetRoom), 
+            teachers: [] 
+          };
+          targetGd.arrangements.push(newArr);
+        }
+        const finalTargetArr = targetArr || targetGd.arrangements[targetGd.arrangements.length - 1];
+        finalTargetArr.teachers.push(source.name);
+      }
+    },
+    
+    handleAddFromPanel(teacherName, target, per) {
+      if (Utils.isTeacherBusy(teacherName, target.targetDate, target.targetTime)) {
+        alert(`教师【${teacherName}】此时段已有安排！`);
+        return;
+      }
+      
+      const targetGd = Store.gradeData[target.targetGrade];
+      let targetArr = targetGd.arrangements.find(a => 
+        a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
+      );
+      
+      if (targetArr && targetArr.teachers.length > 0) {
+        if (targetArr.teachers.length >= per) {
+          if (per === 1) {
+            targetArr.teachers = [teacherName];
+          } else {
+            alert(`每个考场最多安排 ${per} 位教师！`);
+            return;
+          }
+        } else {
+          targetArr.teachers.push(teacherName);
+        }
+      } else {
+        targetArr = { 
+          date: target.targetDate, 
+          time: target.targetTime, 
+          room: parseInt(target.targetRoom), 
+          teachers: [teacherName] 
+        };
+        targetGd.arrangements.push(targetArr);
+      }
+    },
+    
+    handleTeacherDragStart(e, element) {
+      dragSource = {
+        grade: element.dataset.grade,
+        name: element.dataset.name,
+        date: element.dataset.date,
+        time: element.dataset.time,
+        room: element.dataset.room
+      };
+      e.dataTransfer.setData('teacher', element.dataset.name);
+      e.dataTransfer.setData('sourceType', 'slotName');
+      element.classList.add('dragging');
+      UIRenderer.clearAllHighlights();
+      UIRenderer.highlightTeacherCells(element.dataset.name);
+    },
+    
+    handleTeacherDragEnd(element) {
+      element.classList.remove('dragging');
+      Utils.els('.slot-name').forEach(x => x.classList.remove('dragging'));
+      dragSource = null;
+      UIRenderer.clearAllHighlights();
+    }
+  };
+  
+  /* ========== 6. 编排算法模块（优化版） ========== */
+  const ExamArranger = {
+    arrangeAllGrades() {
+      if (!confirm('确定自动编排所有年级？')) return;
+      
+      Store.perRoomTeacher = +Utils.el('#perRoomTeacher').value || 1;
+      Store.minCount = +Utils.el('#minCount').value || 2;
+      Store.maxCount = +Utils.el('#maxCount').value || 6;
+      
+      // 清空现有编排
+      GRADE_LIST.forEach(g => Store.gradeData[g].arrangements = []);
+      
+      // 1. 收集所有考试时段的时间线
+      const allExamSlots = this.collectAllExamSlots();
+      if (allExamSlots.length === 0) {
+        alert('没有找到有效的考试安排，请先设置考试日期和科目！');
+        return;
+      }
+      
+      // 2. 按日期分组考试时段
+      const slotsByDate = {};
+      allExamSlots.forEach(slot => {
+        if (!slotsByDate[slot.date]) slotsByDate[slot.date] = [];
+        slotsByDate[slot.date].push(slot);
+      });
+      
+      // 3. 获取所有教师
+      const teacherGradeMap = {};
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].teachers.forEach(t => {
+          if (!teacherGradeMap[t]) teacherGradeMap[t] = [];
+          if (!teacherGradeMap[t].includes(g)) teacherGradeMap[t].push(g);
+        });
+      });
+      
+      const allTeachers = Object.keys(teacherGradeMap);
+      if (allTeachers.length === 0) {
+        alert('没有教师可以安排！');
+        return;
+      }
+      
+      // 4. 获取考试日期列表（按时间排序）
+      const examDates = Object.keys(slotsByDate).sort();
+      console.log('考试日期列表：', examDates);
+      
+      // 5. 按优化策略编排
+      this.arrangeWithConcentration(allTeachers, teacherGradeMap, slotsByDate, examDates);
+      
+      // 6. 确保所有考场都被编排（补充剩余考场）
+      this.fillRemainingClassrooms(allTeachers, teacherGradeMap, slotsByDate, examDates);
+      
+      // 7. 确保达到最少监考次数
+      this.ensureMinExamCount(allTeachers, teacherGradeMap, slotsByDate, examDates);
+      
+      // 8. 更新UI
+      UIRenderer.renderAllTables();
+      UIRenderer.renderTeacherPool();
+      UIRenderer.refreshAllTeacherPanel();
+      UIRenderer.updateGlobalStats();
+      AutoSaveManager.markUnsaved();
+      
+      this.showArrangementStatistics(allTeachers);
+    },
+    
+    // 核心优化编排逻辑：集中安排 + 完整编排
+    arrangeWithConcentration(allTeachers, teacherGradeMap, slotsByDate, examDates) {
+      // 获取教师已安排场次
+      const getTeacherCount = teacher => {
+        let count = 0;
+        GRADE_LIST.forEach(g => {
+          Store.gradeData[g].arrangements.forEach(a => {
+            if (a.teachers.includes(teacher)) count++;
+          });
+        });
+        return count;
+      };
+      
+      // 按教师任教学年级数排序：单年级教师优先
+      const singleGradeTeachers = allTeachers.filter(t => teacherGradeMap[t].length === 1);
+      const multiGradeTeachers = allTeachers.filter(t => teacherGradeMap[t].length > 1);
+      
+      // 阶段1：尝试将所有监考集中在一天
+      this.arrangeInSingleDay(singleGradeTeachers, teacherGradeMap, slotsByDate, examDates);
+      this.arrangeInSingleDay(multiGradeTeachers, teacherGradeMap, slotsByDate, examDates);
+      
+      // 阶段2：如果一天安排不完，安排在连续的两天
+      this.arrangeInConsecutiveDays(singleGradeTeachers, teacherGradeMap, slotsByDate, examDates);
+      this.arrangeInConsecutiveDays(multiGradeTeachers, teacherGradeMap, slotsByDate, examDates);
+      
+      // 阶段3：确保每位教师达到最少监考次数
+      this.ensureTeacherMinCount(allTeachers, teacherGradeMap, slotsByDate, examDates);
+    },
+    
+    // 阶段1：尝试在一天内安排
+    arrangeInSingleDay(teachers, teacherGradeMap, slotsByDate, examDates) {
+      const targetCount = Store.minCount;
+      
+      teachers.forEach(teacher => {
+        let arrangedCount = this.getTeacherArrangedCount(teacher);
+        
+        // 如果已经达到目标次数，跳过
+        if (arrangedCount >= targetCount) return;
+        
+        const teacherGrades = teacherGradeMap[teacher];
+        
+        // 尝试在每一天安排
+        for (let date of examDates) {
+          if (arrangedCount >= targetCount) break;
+          
+          const availableSlots = slotsByDate[date] || [];
+          for (let slot of availableSlots) {
+            if (arrangedCount >= targetCount) break;
+            if (!teacherGrades.includes(slot.grade)) continue;
+            if (Utils.isTeacherBusy(teacher, date, slot.time)) continue;
+            
+            if (this.tryArrangeTeacher(teacher, slot, Store.perRoomTeacher)) {
+              arrangedCount++;
+            }
+          }
+        }
+      });
+    },
+    
+    // 阶段2：安排在连续的两天
+    arrangeInConsecutiveDays(teachers, teacherGradeMap, slotsByDate, examDates) {
+      const targetCount = Store.minCount;
+      
+      teachers.forEach(teacher => {
+        let arrangedCount = this.getTeacherArrangedCount(teacher);
+        
+        // 如果已经达到目标次数，跳过
+        if (arrangedCount >= targetCount) return;
+        
+        const teacherGrades = teacherGradeMap[teacher];
+        
+        // 尝试每一对连续的天
+        for (let i = 0; i < examDates.length - 1; i++) {
+          if (arrangedCount >= targetCount) break;
+          
+          const consecutiveDates = [examDates[i], examDates[i + 1]];
+          
+          for (let date of consecutiveDates) {
+            if (arrangedCount >= targetCount) break;
+            
+            const availableSlots = slotsByDate[date] || [];
+            for (let slot of availableSlots) {
+              if (arrangedCount >= targetCount) break;
+              if (!teacherGrades.includes(slot.grade)) continue;
+              if (Utils.isTeacherBusy(teacher, date, slot.time)) continue;
+              
+              if (this.tryArrangeTeacher(teacher, slot, Store.perRoomTeacher)) {
+                arrangedCount++;
+              }
+            }
+          }
+        }
+      });
+    },
+    
+    // 阶段3：确保教师达到最少监考次数（使用剩余所有时段）
+    ensureTeacherMinCount(allTeachers, teacherGradeMap, slotsByDate, examDates) {
+      allTeachers.forEach(teacher => {
+        let currentCount = this.getTeacherArrangedCount(teacher);
+        if (currentCount >= Store.minCount) return;
+        
+        const teacherGrades = teacherGradeMap[teacher];
+        const remainingCount = Store.minCount - currentCount;
+        
+        // 在所有可用的时段中安排
+        for (let date of examDates) {
+          if (currentCount >= Store.minCount) break;
+          
+          const availableSlots = slotsByDate[date] || [];
+          for (let slot of availableSlots) {
+            if (currentCount >= Store.minCount) break;
+            if (!teacherGrades.includes(slot.grade)) continue;
+            if (Utils.isTeacherBusy(teacher, date, slot.time)) continue;
+            
+            if (this.tryArrangeTeacher(teacher, slot, Store.perRoomTeacher)) {
+              currentCount++;
+            }
+          }
+        }
+      });
+    },
+    
+    // 新增：补充编排所有剩余考场
+    fillRemainingClassrooms(allTeachers, teacherGradeMap, slotsByDate, examDates) {
+      const allSlots = this.collectAllExamSlots();
+      
+      // 统计已编排的考场
+      const arrangedRooms = new Set();
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].arrangements.forEach(a => {
+          const key = `${g}_${a.date}_${a.time}_${a.room}`;
+          arrangedRooms.add(key);
+        });
+      });
+      
+      // 找出未编排的考场
+      allSlots.forEach(slot => {
+        const rooms = this.getGradeRooms(slot.grade);
+        
+        for (let room = 1; room <= rooms; room++) {
+          const roomKey = `${slot.grade}_${slot.date}_${slot.time}_${room}`;
+          
+          if (!arrangedRooms.has(roomKey)) {
+            // 这个考场还未编排，尝试安排教师
+            this.findTeacherForEmptyRoom(slot, room, allTeachers, teacherGradeMap);
+          }
+        }
+      });
+    },
+    
+    // 为空白考场寻找合适的教师
+    findTeacherForEmptyRoom(slot, room, allTeachers, teacherGradeMap) {
+      const gd = Store.gradeData[slot.grade];
+      
+      // 按教师场次数排序（场次少的优先）
+      const sortedTeachers = allTeachers
+        .filter(teacher => teacherGradeMap[teacher].includes(slot.grade))
+        .sort((a, b) => {
+          const countA = this.getTeacherArrangedCount(a);
+          const countB = this.getTeacherArrangedCount(b);
+          return countA - countB;
+        });
+      
+      for (let teacher of sortedTeachers) {
+        // 检查冲突
+        if (Utils.isTeacherBusy(teacher, slot.date, slot.time)) continue;
+        
+        // 检查是否超过最大监考次数
+        if (this.getTeacherArrangedCount(teacher) >= Store.maxCount) continue;
+        
+        // 检查考场是否已有安排
+        const existingArrangement = gd.arrangements.find(a =>
+          a.date === slot.date && a.time === slot.time && a.room == room
+        );
+        
+        if (!existingArrangement) {
+          // 创建新安排
+          gd.arrangements.push({
+            date: slot.date,
+            time: slot.time,
+            room: room,
+            teachers: [teacher]
+          });
+          return true;
+        } else if (existingArrangement.teachers.length < Store.perRoomTeacher) {
+          // 添加到现有安排
+          existingArrangement.teachers.push(teacher);
+          return true;
+        }
+      }
+      
+      return false;
+    },
+    
+    // 获取教师已编排场次
+    getTeacherArrangedCount(teacher) {
+      let count = 0;
+      GRADE_LIST.forEach(g => {
+        Store.gradeData[g].arrangements.forEach(a => {
+          if (a.teachers.includes(teacher)) count++;
+        });
+      });
+      return count;
+    },
+    
+    // 确保达到最少监考次数（原有逻辑）
+    ensureMinExamCount(allTeachers, teacherGradeMap, slotsByDate, examDates) {
+      allTeachers.forEach(teacher => {
+        let currentCount = this.getTeacherArrangedCount(teacher);
+        if (currentCount >= Store.minCount) return;
+        
+        const teacherGrades = teacherGradeMap[teacher];
+        const remainingCount = Store.minCount - currentCount;
+        
+        // 在剩余的所有时段中安排
+        for (let date of examDates) {
+          if (currentCount >= Store.minCount) break;
+          
+          const availableSlots = slotsByDate[date] || [];
+          for (let slot of availableSlots) {
+            if (currentCount >= Store.minCount) break;
+            if (!teacherGrades.includes(slot.grade)) continue;
+            if (Utils.isTeacherBusy(teacher, date, slot.time)) continue;
+            
+            if (this.tryArrangeTeacher(teacher, slot, Store.perRoomTeacher)) {
+              currentCount++;
+            }
+          }
+        }
+      });
+    },
+    
+    // 收集所有考试时段
+    collectAllExamSlots() {
+      const allSlots = [];
+      
+      GRADE_LIST.forEach(grade => {
+        const gd = Store.gradeData[grade];
+        if (!gd.enabled || !gd.examPlan) return;
+        
+        gd.examPlan.forEach(period => {
+          if (period.date && period.subs) {
+            period.subs.forEach(sub => {
+              if (sub.sub && sub.time) {
+                allSlots.push({
+                  grade: grade,
+                  date: period.date,
+                  time: sub.time,
+                  subject: sub.sub
+                });
+              }
+            });
+          }
+        });
+      });
+      
+      return allSlots;
+    },
+    
+    // 尝试在指定时段安排教师
+    tryArrangeTeacher(teacher, slot, perRoomTeacher) {
+      const gd = Store.gradeData[slot.grade];
+      if (!gd.enabled) return false;
+      
+      const rooms = this.getGradeRooms(slot.grade);
+      if (rooms <= 0) return false;
+      
+      // 查找可用的考场
+      for (let room = 1; room <= rooms; room++) {
+        const exists = gd.arrangements.some(a =>
+          a.date === slot.date && a.time === slot.time && a.room == room
+        );
+        
+        if (!exists) {
+          // 检查考场是否已满
+          const arrangement = gd.arrangements.find(a =>
+            a.date === slot.date && a.time === slot.time && a.room == room
+          );
+          
+          if (!arrangement) {
+            // 创建新安排
+            gd.arrangements.push({
+              date: slot.date,
+              time: slot.time,
+              room: room,
+              teachers: [teacher]
+            });
+            return true;
+          } else if (arrangement.teachers.length < perRoomTeacher) {
+            // 添加到现有安排
+            arrangement.teachers.push(teacher);
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    },
+    
+    // 获取年级的考场数
+    getGradeRooms(grade) {
+      const sec = Utils.els('.grade-section')[GRADE_LIST.indexOf(grade)];
+      return sec ? +sec.querySelector('.grade-rooms').value || 0 : 0;
+    },
+    
+    // 显示编排统计信息
+    showArrangementStatistics(allTeachers) {
+      const totalExamRooms = this.calculateTotalExamRooms();
+      const totalArrangedRooms = this.calculateTotalArrangedRooms();
+      
+      const stats = {
+        teachers: allTeachers.length,
+        totalExamRooms: totalExamRooms,
+        totalArrangedRooms: totalArrangedRooms,
+        arrangementRate: totalExamRooms > 0 ? ((totalArrangedRooms / totalExamRooms) * 100).toFixed(1) : 0,
+        concentrationStats: {
+          singleDay: 0,
+          twoConsecutiveDays: 0,
+          threeOrMoreDays: 0
+        }
+      };
+      
+      allTeachers.forEach(teacher => {
+        const teacherDates = new Set();
+        
+        GRADE_LIST.forEach(g => {
+          Store.gradeData[g].arrangements.forEach(a => {
+            if (a.teachers.includes(teacher)) {
+              teacherDates.add(a.date);
+            }
+          });
+        });
+        
+        const dateCount = teacherDates.size;
+        if (dateCount === 1) {
+          stats.concentrationStats.singleDay++;
+        } else if (dateCount === 2) {
+          // 检查是否连续两天
+          const dates = Array.from(teacherDates).sort();
+          const isConsecutive = dates.length === 2 && 
+            (new Date(dates[1]) - new Date(dates[0])) / (1000 * 60 * 60 * 24) === 1;
+          
+          if (isConsecutive) {
+            stats.concentrationStats.twoConsecutiveDays++;
+          } else {
+            stats.concentrationStats.threeOrMoreDays++;
+          }
+        } else if (dateCount >= 3) {
+          stats.concentrationStats.threeOrMoreDays++;
+        }
+      });
+      
+      const message = `✅ 编排完成！
+      
+📊 编排统计：
+教师总数：${stats.teachers}人
+考场编排率：${stats.arrangementRate}%（${stats.totalArrangedRooms}/${stats.totalExamRooms}）
+
+📅 监考集中度统计：
+• 集中在1天监考：${stats.concentrationStats.singleDay}人
+• 集中在连续2天：${stats.concentrationStats.twoConsecutiveDays}人
+• 分散在3天以上：${stats.concentrationStats.threeOrMoreDays}人
+
+${stats.arrangementRate < 100 ? '⚠️ 注意：仍有未编排的考场，可能需要手动调整或增加教师数量。' : '✅ 所有考场已编排完成！'}`;
+      
+      alert(message);
+    },
+    
+    // 计算总考场数
+    calculateTotalExamRooms() {
+      let total = 0;
+      
+      GRADE_LIST.forEach(grade => {
+        const gd = Store.gradeData[grade];
+        if (!gd.enabled || !gd.examPlan) return;
+        
+        const rooms = this.getGradeRooms(grade);
+        if (rooms <= 0) return;
+        
+        let subCount = 0;
+        gd.examPlan.forEach(period => {
+          if (period.subs) {
+            subCount += period.subs.filter(s => s.sub && s.time).length;
+          }
+        });
+        
+        total += subCount * rooms;
+      });
+      
+      return total;
+    },
+    
+    // 计算已编排考场数
+    calculateTotalArrangedRooms() {
+      let total = 0;
+      GRADE_LIST.forEach(g => {
+        total += Store.gradeData[g].arrangements.filter(a => a.teachers.length > 0).length;
+      });
+      return total;
+    }
+  };
+  
+  /* ========== 7. 数据导出器（最终简化版） ========== */
+  const DataExporter = {
+    exportAllGrades() {
+      console.log('================= 开始导出 =================');
+      
+      try {
+        if (typeof XLSX === 'undefined') {
+          throw new Error('XLSX库未正确加载，请刷新页面重试');
+        }
+        
+        console.log('检查可导出数据...');
+        const enabledGrades = [];
+        GRADE_LIST.forEach(grade => {
+          const gd = Store.gradeData[grade];
+          const sec = Utils.els('.grade-section')[GRADE_LIST.indexOf(grade)];
+          const rooms = sec ? +sec.querySelector('.grade-rooms').value || 0 : 0;
+          
+          if (gd.enabled && gd.examPlan && gd.examPlan.length > 0 && rooms > 0) {
+            enabledGrades.push(grade);
+          }
+        });
+        
+        if (enabledGrades.length === 0) {
+          alert('没有可导出的数据！请确保：\n1. 至少一个年级被启用（勾选复选框）\n2. 设置了考试安排（日期、科目、时间）\n3. 设置了考场数（大于0）');
+          return;
+        }
+        
+        if (!templateStyle) {
+          templateStyle = { cols: [], rows: [], cells: {} };
+          for (let i = 0; i < 50; i++) templateStyle.cols.push({ wch: 15 });
+          for (let i = 0; i < 200; i++) templateStyle.rows.push({ hpt: 20 });
+        }
+        
+        // 创建工作簿
+        const wb = XLSX.utils.book_new();
+        
+        // 1. 导出监考安排表
+        this.exportArrangementTable(wb, enabledGrades);
+        
+        // 2. 导出最简化的教师监考场次统计表
+        this.exportSimplifiedTeacherStatistics(wb);
+        
+        const fileName = `全年级监考安排表_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+        
+        console.log('================= 导出成功 =================');
+        alert(`✅ 导出成功！\n文件已保存为: ${fileName}\n文件包含：\n1. 监考安排表\n2. 教师监考统计`);
+        
+      } catch (error) {
+        console.error('导出失败，详细错误:', error);
+        let errorMessage = '导出失败：\n';
+        errorMessage += error.message + '\n\n';
+        errorMessage += '请尝试以下步骤：\n';
+        errorMessage += '1. 刷新页面重新加载\n';
+        errorMessage += '2. 检查控制台错误信息\n';
+        errorMessage += '3. 确保至少有一个年级有完整的考试安排';
+        alert(errorMessage);
+      }
+    },
+    
+    // 导出监考安排表（原有功能不变）
+    exportArrangementTable(wb, enabledGrades) {
+      const ws = XLSX.utils.aoa_to_sheet([[]]);
+      const allData = [];
+      const merges = [];
+      let currentRow = 0;
+      
+      enabledGrades.forEach((grade, gradeIndex) => {
+        const gd = Store.gradeData[grade];
+        const sec = Utils.els('.grade-section')[GRADE_LIST.indexOf(grade)];
+        const rooms = +sec.querySelector('.grade-rooms').value || 0;
+        
+        const slots = [];
+        gd.examPlan.forEach(day => {
+          if (day.date && day.subs) {
+            day.subs.forEach(s => {
+              if (s.sub && s.time) {
+                slots.push({ 
+                  date: day.date, 
+                  sub: s.sub, 
+                  time: s.time 
+                });
+              }
+            });
+          }
+        });
+        
+        if (slots.length === 0) return;
+        
+        if (slots.length > 0) {
+          let currentDate = slots[0].date;
+          let startCol = 1;
+          let count = 1;
+          
+          for (let i = 1; i <= slots.length; i++) {
+            if (i < slots.length && slots[i].date === currentDate) {
+              count++;
+            } else {
+              if (count > 1) {
+                merges.push({
+                  s: { r: currentRow + 2, c: startCol },
+                  e: { r: currentRow + 2, c: startCol + count - 1 }
+                });
+              }
+              
+              if (i < slots.length) {
+                currentDate = slots[i].date;
+                startCol = 1 + i;
+                count = 1;
+              }
+            }
+          }
+        }
+        
+        allData.push([`${grade} 监考安排表`]);
+        currentRow++;
+        allData.push([]);
+        currentRow++;
+        
+        const headerRow = ['考场'];
+        slots.forEach(slot => {
+          headerRow.push(Utils.formatDateWithWeekday(slot.date) || slot.date);
+        });
+        allData.push(headerRow);
+        currentRow++;
+        
+        const timeRow = ['时间'];
+        slots.forEach(slot => {
+          timeRow.push(slot.time || '');
+        });
+        allData.push(timeRow);
+        currentRow++;
+        
+        const subjectRow = ['科目'];
+        slots.forEach(slot => {
+          subjectRow.push(slot.sub || '');
+        });
+        allData.push(subjectRow);
+        currentRow++;
+        
+        for (let r = 1; r <= rooms; r++) {
+          const roomRow = [`考场${r}`];
+          
+          slots.forEach(slot => {
+            const arrangement = Utils.findArrangement(grade, slot.date, slot.time, r);
+            
+            if (arrangement && arrangement.teachers && arrangement.teachers.length > 0) {
+              roomRow.push(arrangement.teachers.join('\n'));
+            } else {
+              roomRow.push('');
+            }
+          });
+          
+          allData.push(roomRow);
+          currentRow++;
+        }
+        
+        if (gradeIndex < enabledGrades.length - 1) {
+          allData.push(Array(headerRow.length).fill(''));
+          currentRow++;
+        }
+      });
+      
+      XLSX.utils.sheet_add_aoa(ws, allData, { origin: 'A1' });
+      
+      if (merges.length > 0) {
+        ws['!merges'] = merges;
+      }
+      
+      const centerStyle = {
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true }
+      };
+      
+      for (let r = 0; r < allData.length; r++) {
+        for (let c = 0; c < (allData[r] || []).length; c++) {
+          const cellRef = XLSX.utils.encode_cell({ r, c });
+          if (!ws[cellRef]) {
+            ws[cellRef] = { v: allData[r][c], t: 's' };
+          }
+          ws[cellRef].s = centerStyle;
+        }
+      }
+      
+      if (templateStyle.cols && templateStyle.cols.length > 0) {
+        ws['!cols'] = templateStyle.cols;
+      }
+      
+      XLSX.utils.book_append_sheet(wb, ws, '监考安排表');
+    },
+    
+    // 新增：导出最简化的教师监考场次统计表
+    exportSimplifiedTeacherStatistics(wb) {
+      // 收集所有教师
+      const allTeachers = Utils.getAllTeachers();
+      if (allTeachers.size === 0) return;
+      
+      // 计算教师统计
+      const teacherStats = [];
+      allTeachers.forEach(teacher => {
+        const stats = {
+          name: teacher,
+          total: 0,
+          gradeSubjectSet: new Set() // 存储"年级+科目"组合
+        };
+        
+        // 遍历所有安排，统计该教师的监考场次
+        GRADE_LIST.forEach(grade => {
+          const gd = Store.gradeData[grade];
+          gd.arrangements.forEach(arrangement => {
+            if (arrangement.teachers.includes(teacher)) {
+              // 总场次
+              stats.total++;
+              
+              // 找到对应的科目
+              const examPlan = gd.examPlan.find(plan => plan.date === arrangement.date);
+              if (examPlan) {
+                const examSlot = examPlan.subs.find(sub => sub.time === arrangement.time);
+                if (examSlot && examSlot.sub) {
+                  // 添加"年级+科目"组合
+                  const gradeSubject = `${grade}${examSlot.sub}`;
+                  stats.gradeSubjectSet.add(gradeSubject);
+                }
+              }
+            }
+          });
+        });
+        
+        teacherStats.push(stats);
+      });
+      
+      // 按总场次排序
+      teacherStats.sort((a, b) => b.total - a.total);
+      
+      // 构建Excel数据
+      const allData = [];
+      
+      // 标题
+      allData.push(['教师监考场次统计表']);
+      allData.push([]);
+      
+      // 表头
+      const headerRow = [
+        '序号', 
+        '教师姓名', 
+        '监考总场次', 
+        '监考年级+科目'
+      ];
+      
+      allData.push(headerRow);
+      
+      // 数据行
+      teacherStats.forEach((stats, index) => {
+        // 将"年级+科目"组合转换为字符串，每个组合用【】包裹，用中文逗号分隔
+        const gradeSubjectStr = Array.from(stats.gradeSubjectSet)
+          .sort()
+          .map(item => `【${item}】`)  // 用【】包裹每个组合
+          .join('，');  // 用中文逗号分隔
+        
+        const row = [
+          index + 1,
+          stats.name,
+          stats.total,
+          gradeSubjectStr
+        ];
+        
+        allData.push(row);
+      });
+      
+      // 创建工作表
+      const ws = XLSX.utils.aoa_to_sheet(allData);
+      
+      // 设置样式
+      const titleStyle = {
+        font: { bold: true, sz: 14 },
+        alignment: { horizontal: 'center', vertical: 'center' }
+      };
+      
+      const headerStyle = {
+        font: { bold: true },
+        fill: { fgColor: { rgb: "D9E1F2" } },
+        alignment: { horizontal: 'center', vertical: 'center' }
+      };
+      
+      const numberStyle = {
+        alignment: { horizontal: 'center', vertical: 'center' }
+      };
+      
+      // 应用样式
+      for (let r = 0; r < allData.length; r++) {
+        for (let c = 0; c < (allData[r] || []).length; c++) {
+          const cellRef = XLSX.utils.encode_cell({ r, c });
+          if (ws[cellRef]) {
+            if (r === 0) { // 标题
+              ws[cellRef].s = titleStyle;
+              // 合并标题单元格
+              if (!ws['!merges']) ws['!merges'] = [];
+              ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 3 } });
+            } else if (r === 2) { // 表头行
+              ws[cellRef].s = headerStyle;
+            } else if (c === 2) { // 监考总场次列（第3列）
+              ws[cellRef].s = numberStyle;
+            }
+          }
+        }
+      }
+      
+      // 设置列宽
+      const cols = [
+        { wch: 6 },   // 序号
+        { wch: 12 },  // 姓名
+        { wch: 10 },  // 总场次
+        { wch: 50 }   // 年级+科目组合（设置更宽）
+      ];
+      
+      ws['!cols'] = cols;
+      
+      // 设置自动换行
+      const wrapTextStyle = {
+        alignment: { 
+          horizontal: 'left', 
+          vertical: 'center', 
+          wrapText: true 
+        }
+      };
+      
+      // 为"年级+科目"列设置自动换行
+      for (let r = 3; r < teacherStats.length + 3; r++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c: 3 }); // 第4列（D列）
+        if (ws[cellRef]) {
+          ws[cellRef].s = wrapTextStyle;
+        }
+      }
+      
+      // 添加到工作簿
+      XLSX.utils.book_append_sheet(wb, ws, '教师监考统计');
+    }
+  };
+  
+  /* ========== 8. 事件绑定模块 ========== */
+  const EventBinder = {
+    bindAll() {
+      this.bindGradeToggle();
+      this.bindSavePlanAll();
+      this.bindClickSelectGrade();
+      this.bindGlobalActions();
+      this.bindTeacherActions();
+      this.bindRightPanel();
+      this.bindTxtImport();
+      this.bindUploadTemplate();
+      this.bindExportAllGrades();
+      this.bindClearAllArrangements();
+      this.bindImportExamConfig();
+      this.bindAutoSaveEvents();
+    },
+    
+    bindGradeToggle() {
+      Utils.els('.grade-toggle').forEach(cb => {
+        cb.onchange = () => {
+          const grade = cb.closest('.grade-section').dataset.grade;
+          const content = cb.closest('.grade-section').querySelector('.grade-content');
+          Store.gradeData[grade].enabled = cb.checked;
+          content.classList.toggle('hidden', !cb.checked);
+          UIRenderer.updateGlobalStats();
+        };
+      });
+    },
+    
+    bindSavePlanAll() {
+      Utils.els('.save-plan').forEach(btn => {
+        btn.onclick = function() {
+          const sec = this.closest('.grade-section');
+          const grade = sec.dataset.grade;
+          const gd = Store.gradeData[grade];
+          const days = sec.querySelectorAll('[data-day]');
+          const plan = [];
+          
+          for (let i = 0; i < 3; i++) {
+            const dayInput = days[i];
+            const date = dayInput.value.trim();
+            if (!date) continue;
+            
+            const subInputs = dayInput.parentElement.querySelectorAll('[data-sub]');
+            const timeInputs = dayInput.parentElement.querySelectorAll('[data-time]');
+            const subs = [];
+            for (let k = 0; k < 4; k++) {
+              const sub = subInputs[k].value.trim();
+              const time = timeInputs[k].value.trim();
+              if (sub && time) subs.push({ sub, time });
+            }
+            if (subs.length) plan.push({ date, subs });
+          }
+          
+          if (plan.length === 0) {
+            alert('请填写日期、科目、时间！');
+            return;
+          }
+          
+          gd.examPlan = plan;
+          gd.arrangements = [];
+          UIRenderer.saveUIConfig(grade);
+          UIRenderer.renderGradeTable(grade);
+          UIRenderer.refreshAllTeacherPanel();
+          UIRenderer.updateGlobalStats();
+          UIRenderer.initDateWeekdayDisplay();
+          AutoSaveManager.markUnsaved();
+          alert('✅ 保存成功，表格已生成！');
+        };
+      });
+    },
+    
+    bindClickSelectGrade() {
+      document.addEventListener('click', e => {
+        const sec = e.target.closest('.grade-section');
+        if (!sec) return;
+        const grade = sec.dataset.grade;
+        if (!Store.gradeData[grade].enabled) return;
+        Utils.els('.grade-section').forEach(s => s.classList.remove('grade-active'));
+        sec.classList.add('grade-active');
+        UIRenderer.setActiveGradeUI(grade);
+      });
+    },
+bindGlobalActions() {
+      Utils.el('#autoAll').onclick = () => ExamArranger.arrangeAllGrades();
+      
+      Utils.el('#backupAll').onclick = () => {
+        GRADE_LIST.forEach(g => UIRenderer.saveUIConfig(g));
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(Store, null, 2)], { type: 'application/json' }));
+        a.download = '全年级监考完整备份.json';
+        a.click();
+        alert('✅ 完整备份成功！\n包含：日期、科目、时间、考场数、教师、编排');
+      };
+      
+      Utils.el('#restoreAll').onclick = () => Utils.el('#restoreFile').click();
+      Utils.el('#restoreFile').onchange = e => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try { 
+            const restoredData = JSON.parse(reader.result);
+            Object.assign(Store, restoredData);
+          } catch { 
+            alert('恢复失败！文件格式不正确。'); 
+            return; 
+          }
+          
+          GRADE_LIST.forEach(g => UIRenderer.loadUIConfig(g));
+          UIRenderer.renderAllTables();
+          UIRenderer.renderTeacherPool();
+          UIRenderer.refreshAllTeacherPanel();
+          UIRenderer.initDateWeekdayDisplay();
+          UIRenderer.updateCurrentGradeTeacherCount();
+          
+          Utils.els('.grade-toggle').forEach(cb => {
+            const g = cb.closest('.grade-section').dataset.grade;
+            cb.checked = Store.gradeData[g].enabled;
+            cb.closest('.grade-section').querySelector('.grade-content').classList.toggle('hidden', !cb.checked);
+          });
+          
+          Utils.els('.grade-section').forEach(s => s.classList.remove('grade-active'));
+          Utils.el(`.grade-section[data-grade="${Store.activeGrade}"]`).classList.add('grade-active');
+          UIRenderer.setActiveGradeUI(Store.activeGrade);
+          UIRenderer.updateGlobalStats();
+          AutoSaveManager.markUnsaved();
+          alert('✅ 恢复成功！所有数据100%恢复');
+        };
+        reader.readAsText(e.target.files[0]);
+      };
+    },
+    
+    bindTeacherActions() {
+      Utils.el('#addTeachers').onclick = () => {
+        const grade = Store.activeGrade;
+        const text = Utils.el('#teacherArea').value.trim();
+        if (!text) return;
+        const list = text.split('\n').map(x => x.trim()).filter(Boolean);
+        Store.gradeData[grade].teachers = [...new Set([...Store.gradeData[grade].teachers, ...list])];
+        Utils.el('#teacherArea').value = '';
+        UIRenderer.renderTeacherPool();
+        UIRenderer.refreshAllTeacherPanel();
+        UIRenderer.updateGlobalStats();
+        UIRenderer.updateCurrentGradeTeacherCount();
+        AutoSaveManager.markUnsaved();
+      };
+      
+      Utils.el('#clearGradeTeachers').onclick = () => {
+        if (!confirm('清空当前年级教师？')) return;
+        Store.gradeData[Store.activeGrade].teachers = [];
+        UIRenderer.renderTeacherPool();
+        UIRenderer.refreshAllTeacherPanel();
+        UIRenderer.updateGlobalStats();
+        UIRenderer.updateCurrentGradeTeacherCount();
+        AutoSaveManager.markUnsaved();
+      };
+      
+      Utils.el('#clearArrangements').onclick = () => {
+        if (!confirm('清空当前年级安排？')) return;
+        Store.gradeData[Store.activeGrade].arrangements = [];
+        UIRenderer.renderGradeTable(Store.activeGrade);
+        UIRenderer.refreshAllTeacherPanel();
+        UIRenderer.updateGlobalStats();
+        AutoSaveManager.markUnsaved();
+      };
+    },
+    
+    bindRightPanel() {
+      Utils.el('#searchAllTeacher').oninput = () => UIRenderer.refreshAllTeacherPanel();
+      Utils.el('#filterGrade').onchange = () => UIRenderer.refreshAllTeacherPanel();
+      Utils.el('#sortByCount').onchange = () => UIRenderer.refreshAllTeacherPanel();
+    },
+    
+    bindTxtImport() {
+      Utils.el('#importTxt').onchange = e => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+          const lines = e.target.result.split('\n').map(i => i.trim()).filter(Boolean);
+          lines.forEach(line => {
+            const [grade, teacherStr] = line.split('|').map(i => i.trim());
+            if (!GRADE_LIST.includes(grade) || !teacherStr) return;
+            const teachers = teacherStr.split(',').map(i => i.trim()).filter(Boolean);
+            Store.gradeData[grade].teachers = [...new Set([...Store.gradeData[grade].teachers, ...teachers])];
+          });
+          UIRenderer.renderTeacherPool();
+          UIRenderer.refreshAllTeacherPanel();
+          UIRenderer.updateGlobalStats();
+          UIRenderer.updateCurrentGradeTeacherCount();
+          AutoSaveManager.markUnsaved();
+          alert('✅ 导入教师成功！');
+        };
+        reader.readAsText(file, 'utf-8');
+      };
+    },
+    
+    bindUploadTemplate() {
+      Utils.el('#uploadTemplate').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            const data = new Uint8Array(e.target.result);
+            userTemplateWB = XLSX.read(data, { type: 'array' });
+            const sheet = userTemplateWB.Sheets[userTemplateWB.SheetNames[0]];
+            templateStyle = { cols: sheet['!cols']||[], rows: sheet['!rows']||[], cells: {} };
+            for (let ref in sheet) { 
+              if (!ref.startsWith('!') && sheet[ref].s) templateStyle.cells[ref] = sheet[ref].s; 
+            }
+            alert('✅ 模板样式提取成功！');
+          } catch (err) { 
+            alert('❌ 模板加载失败：' + err.message); 
+          }
+        };
+        reader.readAsArrayBuffer(file);
+      });
+    },
+    
+    bindExportAllGrades() {
+      Utils.el('#exportAllGrades').onclick = () => DataExporter.exportAllGrades();
+    },
+    
+    bindClearAllArrangements() {
+      Utils.el('#clearAllArrangements').onclick = () => {
+        if (!confirm('⚠️ 确定清空所有编排？')) return;
+        GRADE_LIST.forEach(g => Store.gradeData[g].arrangements = []);
+        UIRenderer.renderAllTables();
+        UIRenderer.refreshAllTeacherPanel();
+        UIRenderer.updateGlobalStats();
+        UIRenderer.renderTeacherPool();
+        AutoSaveManager.markUnsaved();
+        alert('✅ 已清空！');
+      };
+    },
+    
+    bindImportExamConfig() {
+      Utils.el('#importExamConfig').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          try {
+            const text = e.target.result;
+            const lines = text.split('\n').map(i => i.trim()).filter(Boolean);
+            const config = {};
+            
+            GRADE_LIST.forEach(grade => {
+              config[grade] = { 
+                rooms: 8, 
+                day1: { date: '', subs: [] }, 
+                day2: { date: '', subs: [] }, 
+                day3: { date: '', subs: [] }  
+              };
+            });
+            
+            for (let line of lines) {
+              const parts = line.split('|').map(i => i.trim()).filter(Boolean);
+              if (parts.length < 4) continue; 
+              
+              const grade = parts[0];
+              const roomCount = parseInt(parts[1]);
+              const dayNum = parseInt(parts[2]); 
+              const date = parts[3]; 
+              const subjectBlock = parts.slice(4).join('|'); 
+              
+              if (!GRADE_LIST.includes(grade) || isNaN(dayNum) || dayNum < 1 || dayNum > 3) continue;
+              
+              if (!isNaN(roomCount) && roomCount > 0) {
+                config[grade].rooms = roomCount;
+              }
+              
+              const subs = [];
+              if (subjectBlock) {
+                const subjectItems = subjectBlock.split(',').map(i => i.trim()).filter(Boolean);
+                for (let item of subjectItems) {
+                  const [subName, time] = item.split('|').map(i => i.trim());
+                  if (subName && time) {
+                    subs.push({ sub: subName, time: time });
+                  }
+                }
+              }
+              
+              config[grade][`day${dayNum}`] = {
+                date: date,
+                subs: subs
+              };
+            }
+            
+            for (let g of GRADE_LIST) {
+              const sec = Utils.el(`.grade-section[data-grade="${g}"]`);
+              if (!sec) continue;
+              const gradeConfig = config[g];
+              const gd = Store.gradeData[g];
+              
+              const roomInput = sec.querySelector('.grade-rooms');
+              if (roomInput) {
+                roomInput.value = gradeConfig.rooms;
+              }
+              
+              [1, 2, 3].forEach(dayNum => {
+                const dayConfig = gradeConfig[`day${dayNum}`];
+                if (!dayConfig) return;
+                
+                const dayInput = sec.querySelector(`[data-day="${dayNum}"]`);
+                const subInputs = sec.querySelectorAll(`[data-day="${dayNum}"] ~ div [data-sub]`);
+                const timeInputs = sec.querySelectorAll(`[data-day="${dayNum}"] ~ div [data-time]`);
+                
+                dayInput.value = '';
+                subInputs.forEach(s => s.value = '');
+                timeInputs.forEach(t => t.value = '');
+                
+                if (dayConfig.date) {
+                  dayInput.value = dayConfig.date;
+                }
+                
+                dayConfig.subs.forEach((item, idx) => {
+                  if (idx < 4) { 
+                    if (subInputs[idx]) subInputs[idx].value = item.sub;
+                    if (timeInputs[idx]) timeInputs[idx].value = item.time;
+                  }
+                });
+              });
+              
+              const plan = [];
+              [1, 2, 3].forEach(dayNum => {
+                const dayConfig = gradeConfig[`day${dayNum}`];
+                if (dayConfig.date && dayConfig.subs.length) {
+                  plan.push({
+                    date: dayConfig.date,
+                    subs: dayConfig.subs
+                  });
+                }
+              });
+              gd.examPlan = plan;
+              gd.arrangements = [];
+              UIRenderer.saveUIConfig(g); 
+            }
+            
+            UIRenderer.renderAllTables();
+            UIRenderer.updateGlobalStats();
+            UIRenderer.initDateWeekdayDisplay();
+            AutoSaveManager.markUnsaved();
+            alert('✅ 考试配置导入成功！第1/2/3天信息已正确填充！');
+          } catch (err) {
+            console.error('导入错误：', err);
+            alert('❌ 导入失败：' + err.message);
+          }
+        };
+        reader.readAsText(file, 'utf-8');
+      });
+    },
+    
+    bindAutoSaveEvents() {
+      Utils.el('#manualSave').onclick = () => AutoSaveManager.triggerManualSave();
+      Utils.el('#clearAutoSave').onclick = () => AutoSaveManager.clearData();
+    }
+  };
+  
+  /* ========== 9. 应用初始化 ========== */
+  const App = {
+    init() {
+      this.renderGradeSections();
+      EventBinder.bindAll();
+      AutoSaveManager.checkAndRestore();
+      AutoSaveManager.start(30000);
+      UIRenderer.renderAllTables();
+      UIRenderer.renderTeacherPool();
+      UIRenderer.refreshAllTeacherPanel();
+      UIRenderer.initDateWeekdayDisplay();
+      UIRenderer.updateCurrentGradeTeacherCount();
+      UIRenderer.updateGlobalStats();
+      this.setActiveGradeUI(Store.activeGrade);
+    },
+    
+    renderGradeSections() {
+      const container = Utils.el('#allGradesContainer');
+      container.innerHTML = '';
+      
+      GRADE_LIST.forEach(grade => {
+        const div = document.createElement('div');
+        div.className = 'grade-section bg-white rounded shadow';
+        div.dataset.grade = grade;
+        if (grade === Store.activeGrade) div.classList.add('grade-active');
+        div.innerHTML = `
+          <label class="font-bold text-lg mb-2 flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" class="grade-toggle w-5 h-5" ${Store.gradeData[grade].enabled ? 'checked' : ''}>
+            ${grade} 监考编排
+          </label>
+          <div class="grade-content ${Store.gradeData[grade].enabled ? '' : 'hidden'}">
+            <div class="mb-3">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-2">
+                <div class="border p-2 rounded">
+                  <div class="font-bold mb-1">第1天</div>
+                  <input type="date" class="w-full border p-1 mb-1" data-day="1">
+                  <div class="grid grid-cols-2 gap-1">
+                    <input placeholder="科目" data-sub="1"><input placeholder="时间" data-time="1">
+                    <input placeholder="科目" data-sub="2"><input placeholder="时间" data-time="2">
+                    <input placeholder="科目" data-sub="3"><input placeholder="时间" data-time="3">
+                    <input placeholder="科目" data-sub="4"><input placeholder="时间" data-time="4">
+                  </div>
+                </div>
+                <div class="border p-2 rounded">
+                  <div class="font-bold mb-1">第2天</div>
+                  <input type="date" class="w-full border p-1 mb-1" data-day="2">
+                  <div class="grid grid-cols-2 gap-1">
+                    <input placeholder="科目" data-sub="1"><input placeholder="时间" data-time="1">
+                    <input placeholder="科目" data-sub="2"><input placeholder="时间" data-time="2">
+                    <input placeholder="科目" data-sub="3"><input placeholder="时间" data-time="3">
+                    <input placeholder="科目" data-sub="4"><input placeholder="时间" data-time="4">
+                  </div>
+                </div>
+                <div class="border p-2 rounded">
+                  <div class="font-bold">第3天</div>
+                  <input type="date" class="w-full border p-1 mb-1" data-day="3">
+                  <div class="grid grid-cols-2 gap-1">
+                    <input placeholder="科目" data-sub="1"><input placeholder="时间" data-time="1">
+                    <input placeholder="科目" data-sub="2"><input placeholder="时间" data-time="2">
+                    <input placeholder="科目" data-sub="3"><input placeholder="时间" data-time="3">
+                    <input placeholder="科目" data-sub="4"><input placeholder="时间" data-time="4">
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center justify-center gap-3 mt-2">
+                <label class="text-xs">考场数：</label>
+                <input type="number" class="grade-rooms w-16 border p-1" value="8" min="1" max="30">
+                <button class="save-plan bg-blue-600 text-white py-1 rounded">保存安排并生成空表</button>
+              </div>
+            </div>
+            <div class="table-container"><div class="grade-table"></div></div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    },
+    
+    setActiveGradeUI(grade) {
+      Utils.els('.grade-section').forEach(s => s.classList.remove('grade-active'));
+      const activeSec = Utils.el(`.grade-section[data-grade="${grade}"]`);
+      if (activeSec) activeSec.classList.add('grade-active');
+      Store.activeGrade = grade;
+      UIRenderer.updateCurrentGradeTeacherCount();
+      UIRenderer.renderTeacherPool();
+    }
+  };
+  
+  // 暴露全局引用（用于调试）
+  window.App = App;
+  window.Store = Store;
+  window.Utils = Utils;
+  
+  // 启动应用
+  document.addEventListener('DOMContentLoaded', () => App.init());
+})();
+</script>
+</body>
+</html>
