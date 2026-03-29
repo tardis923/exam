@@ -1437,7 +1437,7 @@ const ExamArranger = {
       }
     });
     
-    const message = `✅ 编排完成！
+    const message = `✅ 编排完成！右侧教师名字后的红色数字为监考的年级（7是初一，8是初二，依此类推）可能有部分教师场次<最少场次，请手动调整~~
     
 📊 编排统计：
 教师总数：${stats.teachers}人
@@ -1448,7 +1448,7 @@ const ExamArranger = {
 • 集中在连续2天：${stats.concentrationStats.twoConsecutiveDays}人
 • 分散在3天以上：${stats.concentrationStats.threeOrMoreDays}人
 
-${stats.arrangementRate < 100 ? '⚠️ 注意：仍有未编排的考场，可能需要手动调整或增加教师数量。' : '✅ 所有考场已编排完成！'}`;
+${stats.arrangementRate < 100 ? '⚠️ 注意：仍有未编排的考场，可能需要手动调整或增加教师数量。' : '✅ 所有考场已编排完成！可能有部分教师场次<最少场次，请手动调整~'}`;
     
     alert(message);
   },
