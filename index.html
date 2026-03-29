@@ -189,65 +189,119 @@
   let templateStyle = null;
   let dragSource = null;
   
-  /* ========== 2. 工具函数模块 ========== */
-  const Utils = {
-    el: selector => document.querySelector(selector),
-    els: selector => document.querySelectorAll(selector),
-    
-    getWeekday(dateStr) {
-      if (!dateStr) return '';
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return '';
-      const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
-      return `星期${weekdays[date.getDay()]}`;
-    },
-    
-    formatDateWithWeekday(dateStr) {
-      if (!dateStr) return '';
-      const weekday = this.getWeekday(dateStr);
-      return weekday ? `${dateStr}(${weekday})` : dateStr;
-    },
-    
-    formatTime(date) {
-      return date.toLocaleTimeString('zh-CN', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        second: '2-digit'
+/* ========== 2. 工具函数模块 ========== */
+const Utils = {
+  el: selector => document.querySelector(selector),
+  els: selector => document.querySelectorAll(selector),
+  
+  getWeekday(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return '';
+    const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+    return `星期${weekdays[date.getDay()]}`;
+  },
+  
+  formatDateWithWeekday(dateStr) {
+    if (!dateStr) return '';
+    const weekday = this.getWeekday(dateStr);
+    return weekday ? `${dateStr}(${weekday})` : dateStr;
+  },
+  
+  formatTime(date) {
+    return date.toLocaleTimeString('zh-CN', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  },
+  
+  getTeacherExamCount(teacherName) {
+    let count = 0;
+    GRADE_LIST.forEach(g => {
+      Store.gradeData[g].arrangements.forEach(a => {
+        if (a.teachers.includes(teacherName)) count++;
       });
-    },
+    });
+    return count;
+  },
+  
+  getAllTeachers() {
+    const teachers = new Set();
+    GRADE_LIST.forEach(g => {
+      Store.gradeData[g].teachers.forEach(t => teachers.add(t));
+    });
+    return teachers;
+  },
+  
+  // 解析时间字符串为分钟数
+  parseTimeToMinutes(timeStr) {
+    if (!timeStr || typeof timeStr !== 'string') return { start: 0, end: 0 };
     
-    getTeacherExamCount(teacherName) {
-      let count = 0;
-      GRADE_LIST.forEach(g => {
-        Store.gradeData[g].arrangements.forEach(a => {
-          if (a.teachers.includes(teacherName)) count++;
-        });
-      });
-      return count;
-    },
+    // 清理空格
+    timeStr = timeStr.trim();
     
-    getAllTeachers() {
-      const teachers = new Set();
-      GRADE_LIST.forEach(g => {
-        Store.gradeData[g].teachers.forEach(t => teachers.add(t));
-      });
-      return teachers;
-    },
+    // 处理多种时间格式
+    const timeRegex = /(\d{1,2})[:：](\d{1,2})\s*[-~—]\s*(\d{1,2})[:：](\d{1,2})/;
+    const match = timeStr.match(timeRegex);
     
-    isTeacherBusy(teacherName, date, time) {
-      return GRADE_LIST.some(g =>
-        Store.gradeData[g].arrangements.some(a =>
-          a.date === date && a.time === time && a.teachers.includes(teacherName)
-        )
-      );
-    },
-    
-    findArrangement(grade, date, time, room) {
-      return Store.gradeData[grade].arrangements.find(a => 
-        a.date === date && a.time === time && a.room == room
-      );
+    if (match) {
+      const startHour = parseInt(match[1]);
+      const startMinute = parseInt(match[2]);
+      const endHour = parseInt(match[3]);
+      const endMinute = parseInt(match[4]);
+      
+      return {
+        start: startHour * 60 + startMinute,
+        end: endHour * 60 + endMinute,
+        original: timeStr
+      };
     }
-  };
+    
+    // 如果是单个时间点，默认给30分钟时长
+    const pointRegex = /(\d{1,2})[:：](\d{1,2})/;
+    const pointMatch = timeStr.match(pointRegex);
+    if (pointMatch) {
+      const hour = parseInt(pointMatch[1]);
+      const minute = parseInt(pointMatch[2]);
+      return {
+        start: hour * 60 + minute,
+        end: hour * 60 + minute + 30, // 默认30分钟
+        original: timeStr
+      };
+    }
+    
+    return { start: 0, end: 0, original: timeStr };
+  },
+  
+  // 检查两个时间区间是否重叠
+  isTimeOverlap(timeStr1, timeStr2) {
+    if (!timeStr1 || !timeStr2) return false;
+    
+    const t1 = this.parseTimeToMinutes(timeStr1);
+    const t2 = this.parseTimeToMinutes(timeStr2);
+    
+    // 检查重叠：t1的开始时间 < t2的结束时间 且 t1的结束时间 > t2的开始时间
+    return t1.start < t2.end && t1.end > t2.start;
+  },
+  
+  // 增强版冲突检查：检查时间重叠
+  isTeacherBusy(teacherName, date, time) {
+    return GRADE_LIST.some(g =>
+      Store.gradeData[g].arrangements.some(a =>
+        a.date === date && 
+        a.teachers.includes(teacherName) && 
+        this.isTimeOverlap(a.time, time)  // 使用时间重叠检查替代精确匹配
+      )
+    );
+  },
+  
+  findArrangement(grade, date, time, room) {
+    return Store.gradeData[grade].arrangements.find(a => 
+      a.date === date && a.time === time && a.room == room
+    );
+  }
+};
   
   /* ========== 3. 自动保存管理器 ========== */
   const AutoSaveManager = {
@@ -717,257 +771,270 @@
     }
   };
   
-  /* ========== 5. 拖拽管理器（修复版） ========== */
-  const DragDropManager = {
-    bindGradeDrag(grade) {
-      const cells = Utils.els(`[data-grade="${grade}"].cell-drop-zone`);
-      const nameElements = Utils.els('.slot-name');
-      
-      cells.forEach(cell => {
-        cell.ondragover = e => {
-          e.preventDefault();
-          cell.classList.add('drag-over');
-        };
-        
-        cell.ondragleave = () => {
-          cell.classList.remove('drag-over');
-        };
-        
-        cell.ondrop = e => this.handleCellDrop(e, cell);
-      });
-      
-      nameElements.forEach(nameElement => {
-        nameElement.ondragstart = e => this.handleTeacherDragStart(e, nameElement);
-        nameElement.ondragend = () => this.handleTeacherDragEnd(nameElement);
-      });
-    },
+/* ========== 5. 拖拽管理器（修复版） ========== */
+const DragDropManager = {
+  bindGradeDrag(grade) {
+    const cells = Utils.els(`[data-grade="${grade}"].cell-drop-zone`);
+    const nameElements = Utils.els('.slot-name');
     
-    handleCellDrop(e, cell) {
-      e.preventDefault();
-      cell.classList.remove('drag-over');
+    cells.forEach(cell => {
+      cell.ondragover = e => {
+        e.preventDefault();
+        cell.classList.add('drag-over');
+      };
       
-      const teacherName = e.dataTransfer.getData('teacher');
-      const sourceType = e.dataTransfer.getData('sourceType');
-      const targetGrade = cell.dataset.grade;
-      const targetDate = cell.dataset.date;
-      const targetTime = cell.dataset.time;
-      const targetRoom = cell.dataset.room;
+      cell.ondragleave = () => {
+        cell.classList.remove('drag-over');
+      };
       
-      if (!targetGrade || !targetDate || !targetTime || !targetRoom) return;
+      cell.ondrop = e => this.handleCellDrop(e, cell);
+    });
+    
+    nameElements.forEach(nameElement => {
+      nameElement.ondragstart = e => this.handleTeacherDragStart(e, nameElement);
+      nameElement.ondragend = () => this.handleTeacherDragEnd(nameElement);
+    });
+  },
+  
+  handleCellDrop(e, cell) {
+    e.preventDefault();
+    cell.classList.remove('drag-over');
+    
+    const teacherName = e.dataTransfer.getData('teacher');
+    const sourceType = e.dataTransfer.getData('sourceType');
+    const targetGrade = cell.dataset.grade;
+    const targetDate = cell.dataset.date;
+    const targetTime = cell.dataset.time;
+    const targetRoom = cell.dataset.room;
+    
+    if (!targetGrade || !targetDate || !targetTime || !targetRoom) return;
+    
+    const per = +Utils.el('#perRoomTeacher').value || 1;
+    const targetGd = Store.gradeData[targetGrade];
+    
+    if (sourceType === 'slotName' && dragSource) {
+      this.handleMoveBetweenCells(dragSource, {targetGrade, targetDate, targetTime, targetRoom});
+    } else if (sourceType === 'rightPanel' && teacherName) {
+      this.handleAddFromPanel(teacherName, {targetGrade, targetDate, targetTime, targetRoom}, per);
+    }
+    
+    UIRenderer.renderAllTables();
+    UIRenderer.renderTeacherPool();
+    UIRenderer.refreshAllTeacherPanel();
+    UIRenderer.updateGlobalStats();
+    AutoSaveManager.markUnsaved();
+    
+    setTimeout(() => {
+      DragDropManager.bindGradeDrag(targetGrade);
+      if (teacherName) UIRenderer.highlightTeacherCells(teacherName);
+    }, 10);
+  },
+  
+  // 修复后的handleMoveBetweenCells函数 - 已修复同一天同时段互调问题
+  handleMoveBetweenCells(source, target) {
+    const sourceGd = Store.gradeData[source.grade];
+    const targetGd = Store.gradeData[target.targetGrade];
+    
+    const sourceArr = sourceGd.arrangements.find(a => 
+      a.date === source.date && a.time === source.time && a.room == source.room
+    );
+    
+    if (!sourceArr || !sourceArr.teachers.includes(source.name)) return;
+    
+    if (source.grade === target.targetGrade && source.date === target.targetDate && 
+        source.time === target.targetTime && source.room == target.targetRoom) {
+      return; // 相同单元格，不执行操作
+    }
+    
+    const targetArr = targetGd.arrangements.find(a => 
+      a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
+    );
+    
+    if (targetArr && targetArr.teachers.length > 0) {
+      const targetTeacher = targetArr.teachers[0];
       
-      const per = +Utils.el('#perRoomTeacher').value || 1;
-      const targetGd = Store.gradeData[targetGrade];
-      
-      if (sourceType === 'slotName' && dragSource) {
-        this.handleMoveBetweenCells(dragSource, {targetGrade, targetDate, targetTime, targetRoom});
-      } else if (sourceType === 'rightPanel' && teacherName) {
-        this.handleAddFromPanel(teacherName, {targetGrade, targetDate, targetTime, targetRoom}, per);
+      // 修复点1：检查是否是同一个人
+      if (source.name === targetTeacher) {
+        return; // 同一个人，不执行任何操作
       }
       
-      UIRenderer.renderAllTables();
-      UIRenderer.renderTeacherPool();
-      UIRenderer.refreshAllTeacherPanel();
-      UIRenderer.updateGlobalStats();
-      AutoSaveManager.markUnsaved();
+      // 修改的冲突检查逻辑：排除当前单元格的安排
+      // 检查源教师在目标时间是否有其他安排（排除自己当前的这个安排）
+      const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
+  return Store.gradeData[g].arrangements.some(a => {
+    // 检查是否是同一天
+    if (a.date === target.targetDate) {
+      // 检查时间是否重叠
+      if (Utils.isTimeOverlap(a.time, target.targetTime)) {
+        // 排除目标单元格本身（因为源教师将要移动到这里）
+        const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
+        // 排除源单元格本身（因为源教师将要离开这里）
+        const isSourceCell = (g === source.grade && a.date === source.date && 
+                             a.time === source.time && a.room == source.room);
+        return a.teachers.includes(source.name) && !isTargetCell && !isSourceCell;
+      }
+    }
+    return false;
+  });
+});
       
-      setTimeout(() => {
-        DragDropManager.bindGradeDrag(targetGrade);
-        if (teacherName) UIRenderer.highlightTeacherCells(teacherName);
-      }, 10);
-    },
-    
-    // 修复后的handleMoveBetweenCells函数 - 已修复同一天同时段互调问题
-    handleMoveBetweenCells(source, target) {
-      const sourceGd = Store.gradeData[source.grade];
-      const targetGd = Store.gradeData[target.targetGrade];
-      
-      const sourceArr = sourceGd.arrangements.find(a => 
-        a.date === source.date && a.time === source.time && a.room == source.room
-      );
-      
-      if (!sourceArr || !sourceArr.teachers.includes(source.name)) return;
-      
-      if (source.grade === target.targetGrade && source.date === target.targetDate && 
-          source.time === target.targetTime && source.room == target.targetRoom) {
-        return; // 相同单元格，不执行操作
+      if (sourceTeacherHasOtherArrangement) {
+        alert(`教师【${source.name}】此时段已有安排！`);
+        return;
       }
       
-      const targetArr = targetGd.arrangements.find(a => 
-        a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
-      );
-      
-      if (targetArr && targetArr.teachers.length > 0) {
-        const targetTeacher = targetArr.teachers[0];
-        
-        // 修复点1：检查是否是同一个人
-        if (source.name === targetTeacher) {
-          return; // 同一个人，不执行任何操作
-        }
-        
-        // 修改的冲突检查逻辑：排除当前单元格的安排
-        // 检查源教师在目标时间是否有其他安排（排除自己当前的这个安排）
-        const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
-          return Store.gradeData[g].arrangements.some(a => {
-            // 检查是否是同一天同一时间
-            if (a.date === target.targetDate && a.time === target.targetTime) {
-              // 排除目标单元格本身（因为源教师将要移动到这里）
-              const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
-              // 排除源单元格本身（因为源教师将要离开这里）
-              const isSourceCell = (g === source.grade && a.date === source.date && 
-                                   a.time === source.time && a.room == source.room);
-              return a.teachers.includes(source.name) && !isTargetCell && !isSourceCell;
-            }
-            return false;
-          });
-        });
-        
-        if (sourceTeacherHasOtherArrangement) {
-          alert(`教师【${source.name}】此时段已有安排！`);
-          return;
-        }
-        
-        // 检查目标教师在源时间是否有其他安排（排除自己当前的这个安排）
-        const targetTeacherHasOtherArrangement = GRADE_LIST.some(g => {
-          return Store.gradeData[g].arrangements.some(a => {
-            // 检查是否是同一天同一时间
-            if (a.date === source.date && a.time === source.time) {
-              // 排除源单元格本身（因为目标教师将要移动到这里）
-              const isSourceCell = (g === source.grade && a.room == source.room);
-              // 排除目标单元格本身（因为目标教师将要离开这里）
-              const isTargetCell = (g === target.targetGrade && a.date === target.targetDate && 
-                                   a.time === target.targetTime && a.room == target.targetRoom);
-              return a.teachers.includes(targetTeacher) && !isSourceCell && !isTargetCell;
-            }
-            return false;
-          });
-        });
-        
-        if (targetTeacherHasOtherArrangement) {
-          alert(`教师【${targetTeacher}】此时段已有安排！`);
-          return;
-        }
-        
-        // 交换逻辑
-        sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
-        targetArr.teachers = targetArr.teachers.filter(t => t !== targetTeacher);
-        
-        if (targetArr.teachers.length === 0) {
-          targetArr.teachers = [source.name];
-        } else {
-          targetArr.teachers.push(source.name);
-        }
-        
-        if (sourceArr.teachers.length === 0) {
-          sourceArr.teachers = [targetTeacher];
-        } else {
-          sourceArr.teachers.push(targetTeacher);
-        }
-      } else {
-        // 移动到空单元格时的冲突检查也需要排除自己当前的安排
-        const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
-          return Store.gradeData[g].arrangements.some(a => {
-            if (a.date === target.targetDate && a.time === target.targetTime) {
-              const isSourceCell = (g === source.grade && a.date === source.date && 
-                                   a.time === source.time && a.room == source.room);
-              return a.teachers.includes(source.name) && !isSourceCell;
-            }
-            return false;
-          });
-        });
-        
-        if (sourceTeacherHasOtherArrangement) {
-          alert(`教师【${source.name}】此时段已有安排！`);
-          return;
-        }
-        
-        // 从源位置移除
-        sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
-        
-        if (sourceArr.teachers.length === 0) {
-          const sourceIndex = sourceGd.arrangements.indexOf(sourceArr);
-          if (sourceIndex > -1) sourceGd.arrangements.splice(sourceIndex, 1);
-        }
-        
-        if (!targetArr) {
-          const newArr = { 
-            date: target.targetDate, 
-            time: target.targetTime, 
-            room: parseInt(target.targetRoom), 
-            teachers: [] 
-          };
-          targetGd.arrangements.push(newArr);
-        }
-        const finalTargetArr = targetArr || targetGd.arrangements[targetGd.arrangements.length - 1];
-        finalTargetArr.teachers.push(source.name);
-      }
-    },
-    
-    handleAddFromPanel(teacherName, target, per) {
-      // 检查冲突，排除目标单元格本身
-      const hasConflict = GRADE_LIST.some(g => {
+      // 检查目标教师在源时间是否有其他安排（排除自己当前的这个安排）
+      const targetTeacherHasOtherArrangement = GRADE_LIST.some(g => {
         return Store.gradeData[g].arrangements.some(a => {
-          if (a.date === target.targetDate && a.time === target.targetTime) {
-            const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
-            return a.teachers.includes(teacherName) && !isTargetCell;
+          // 检查是否是同一天同一时间
+          if (a.date === source.date && a.time === source.time) {
+            // 排除源单元格本身（因为目标教师将要移动到这里）
+            const isSourceCell = (g === source.grade && a.room == source.room);
+            // 排除目标单元格本身（因为目标教师将要离开这里）
+            const isTargetCell = (g === target.targetGrade && a.date === target.targetDate && 
+                                 a.time === target.targetTime && a.room == target.targetRoom);
+            return a.teachers.includes(targetTeacher) && !isSourceCell && !isTargetCell;
           }
           return false;
         });
       });
       
-      if (hasConflict) {
-        alert(`教师【${teacherName}】此时段已有安排！`);
+      if (targetTeacherHasOtherArrangement) {
+        alert(`教师【${targetTeacher}】此时段已有安排！`);
         return;
       }
       
-      const targetGd = Store.gradeData[target.targetGrade];
-      let targetArr = targetGd.arrangements.find(a => 
-        a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
-      );
+      // 交换逻辑
+      sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
+      targetArr.teachers = targetArr.teachers.filter(t => t !== targetTeacher);
       
-      if (targetArr && targetArr.teachers.length > 0) {
-        if (targetArr.teachers.length >= per) {
-          if (per === 1) {
-            targetArr.teachers = [teacherName];
-          } else {
-            alert(`每个考场最多安排 ${per} 位教师！`);
-            return;
-          }
-        } else {
-          targetArr.teachers.push(teacherName);
-        }
+      if (targetArr.teachers.length === 0) {
+        targetArr.teachers = [source.name];
       } else {
-        targetArr = { 
+        targetArr.teachers.push(source.name);
+      }
+      
+      if (sourceArr.teachers.length === 0) {
+        sourceArr.teachers = [targetTeacher];
+      } else {
+        sourceArr.teachers.push(targetTeacher);
+      }
+    } else {
+      // 移动到空单元格时的冲突检查也需要排除自己当前的安排
+      const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
+        return Store.gradeData[g].arrangements.some(a => {
+          if (a.date === target.targetDate && a.time === target.targetTime) {
+            const isSourceCell = (g === source.grade && a.date === source.date && 
+                                 a.time === source.time && a.room == source.room);
+            return a.teachers.includes(source.name) && !isSourceCell;
+          }
+          return false;
+        });
+      });
+      
+      if (sourceTeacherHasOtherArrangement) {
+        alert(`教师【${source.name}】此时段已有安排！`);
+        return;
+      }
+      
+      // 从源位置移除
+      sourceArr.teachers = sourceArr.teachers.filter(t => t !== source.name);
+      
+      if (sourceArr.teachers.length === 0) {
+        const sourceIndex = sourceGd.arrangements.indexOf(sourceArr);
+        if (sourceIndex > -1) sourceGd.arrangements.splice(sourceIndex, 1);
+      }
+      
+      if (!targetArr) {
+        const newArr = { 
           date: target.targetDate, 
           time: target.targetTime, 
           room: parseInt(target.targetRoom), 
-          teachers: [teacherName] 
+          teachers: [] 
         };
-        targetGd.arrangements.push(targetArr);
+        targetGd.arrangements.push(newArr);
       }
-    },
-    
-    handleTeacherDragStart(e, element) {
-      dragSource = {
-        grade: element.dataset.grade,
-        name: element.dataset.name,
-        date: element.dataset.date,
-        time: element.dataset.time,
-        room: element.dataset.room
-      };
-      e.dataTransfer.setData('teacher', element.dataset.name);
-      e.dataTransfer.setData('sourceType', 'slotName');
-      element.classList.add('dragging');
-      UIRenderer.clearAllHighlights();
-      UIRenderer.highlightTeacherCells(element.dataset.name);
-    },
-    
-    handleTeacherDragEnd(element) {
-      element.classList.remove('dragging');
-      Utils.els('.slot-name').forEach(x => x.classList.remove('dragging'));
-      dragSource = null;
-      UIRenderer.clearAllHighlights();
+      const finalTargetArr = targetArr || targetGd.arrangements[targetGd.arrangements.length - 1];
+      finalTargetArr.teachers.push(source.name);
     }
-  };
+  },
+  
+handleAddFromPanel(teacherName, target, per) {
+  // 修复的冲突检查逻辑：检查教师在所有年级、所有考场是否有同一时间段或有重叠时间的安排
+  const hasConflict = GRADE_LIST.some(g => {
+    return Store.gradeData[g].arrangements.some(a => {
+      // 检查是否是同一天
+      if (a.date === target.targetDate) {
+        // 检查时间是否重叠
+        if (Utils.isTimeOverlap(a.time, target.targetTime)) {
+          // 只有当教师在目标单元格已经有安排时才排除冲突检查
+          const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
+          // 如果教师在这个考场已经有安排，这不算冲突（替换自身）
+          if (isTargetCell && a.teachers.includes(teacherName)) {
+            return false;
+          }
+          // 如果教师在同一个时间段的任何其他考场有安排，都算冲突
+          return a.teachers.includes(teacherName);
+        }
+      }
+      return false;
+    });
+  });
+  
+  if (hasConflict) {
+    alert(`教师【${teacherName}】此时段已有安排！`);
+    return;
+  }
+    
+    const targetGd = Store.gradeData[target.targetGrade];
+    let targetArr = targetGd.arrangements.find(a => 
+      a.date === target.targetDate && a.time === target.targetTime && a.room == target.targetRoom
+    );
+    
+    if (targetArr && targetArr.teachers.length > 0) {
+      if (targetArr.teachers.length >= per) {
+        if (per === 1) {
+          targetArr.teachers = [teacherName];
+        } else {
+          alert(`每个考场最多安排 ${per} 位教师！`);
+          return;
+        }
+      } else {
+        targetArr.teachers.push(teacherName);
+      }
+    } else {
+      targetArr = { 
+        date: target.targetDate, 
+        time: target.targetTime, 
+        room: parseInt(target.targetRoom), 
+        teachers: [teacherName] 
+      };
+      targetGd.arrangements.push(targetArr);
+    }
+  },
+  
+  handleTeacherDragStart(e, element) {
+    dragSource = {
+      grade: element.dataset.grade,
+      name: element.dataset.name,
+      date: element.dataset.date,
+      time: element.dataset.time,
+      room: element.dataset.room
+    };
+    e.dataTransfer.setData('teacher', element.dataset.name);
+    e.dataTransfer.setData('sourceType', 'slotName');
+    element.classList.add('dragging');
+    UIRenderer.clearAllHighlights();
+    UIRenderer.highlightTeacherCells(element.dataset.name);
+  },
+  
+  handleTeacherDragEnd(element) {
+    element.classList.remove('dragging');
+    Utils.els('.slot-name').forEach(x => x.classList.remove('dragging'));
+    dragSource = null;
+    UIRenderer.clearAllHighlights();
+  }
+};
 
 /* ========== 6. 编排算法模块（优化版） ========== */
   const ExamArranger = {
@@ -1293,12 +1360,23 @@
     },
     
     // 尝试在指定时段安排教师
-    tryArrangeTeacher(teacher, slot, perRoomTeacher) {
-      const gd = Store.gradeData[slot.grade];
-      if (!gd.enabled) return false;
-      
-      const rooms = this.getGradeRooms(slot.grade);
-      if (rooms <= 0) return false;
+   tryArrangeTeacher(teacher, slot, perRoomTeacher) {
+  const gd = Store.gradeData[slot.grade];
+  if (!gd.enabled) return false;
+  
+  const rooms = this.getGradeRooms(slot.grade);
+  if (rooms <= 0) return false;
+  
+  // 增强的冲突检查：检查时间重叠
+  const teacherBusy = GRADE_LIST.some(g => {
+    return Store.gradeData[g].arrangements.some(a => 
+      a.date === slot.date && 
+      Utils.isTimeOverlap(a.time, slot.time) &&
+      a.teachers.includes(teacher)
+    );
+  });
+  
+  if (teacherBusy) return false;
       
       // 查找可用的考场
       for (let room = 1; room <= rooms; room++) {
