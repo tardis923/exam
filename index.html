@@ -776,7 +776,7 @@
       }, 10);
     },
     
-    // 修复后的handleMoveBetweenCells函数
+    // 修复后的handleMoveBetweenCells函数 - 已修复同一天同时段互调问题
     handleMoveBetweenCells(source, target) {
       const sourceGd = Store.gradeData[source.grade];
       const targetGd = Store.gradeData[target.targetGrade];
@@ -789,7 +789,7 @@
       
       if (source.grade === target.targetGrade && source.date === target.targetDate && 
           source.time === target.targetTime && source.room == target.targetRoom) {
-        return;
+        return; // 相同单元格，不执行操作
       }
       
       const targetArr = targetGd.arrangements.find(a => 
@@ -797,23 +797,52 @@
       );
       
       if (targetArr && targetArr.teachers.length > 0) {
-        // 获取目标单元格的第一位教师
         const targetTeacher = targetArr.teachers[0];
         
         // 修复点1：检查是否是同一个人
         if (source.name === targetTeacher) {
-          // 同一个人，不执行任何操作
-          return;
+          return; // 同一个人，不执行任何操作
         }
         
-        // 修复点2：检查源教师在目标时间是否已有安排
-        if (Utils.isTeacherBusy(source.name, target.targetDate, target.targetTime)) {
+        // 修改的冲突检查逻辑：排除当前单元格的安排
+        // 检查源教师在目标时间是否有其他安排（排除自己当前的这个安排）
+        const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
+          return Store.gradeData[g].arrangements.some(a => {
+            // 检查是否是同一天同一时间
+            if (a.date === target.targetDate && a.time === target.targetTime) {
+              // 排除目标单元格本身（因为源教师将要移动到这里）
+              const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
+              // 排除源单元格本身（因为源教师将要离开这里）
+              const isSourceCell = (g === source.grade && a.date === source.date && 
+                                   a.time === source.time && a.room == source.room);
+              return a.teachers.includes(source.name) && !isTargetCell && !isSourceCell;
+            }
+            return false;
+          });
+        });
+        
+        if (sourceTeacherHasOtherArrangement) {
           alert(`教师【${source.name}】此时段已有安排！`);
           return;
         }
         
-        // 修复点3：检查目标教师在源时间是否已有安排
-        if (Utils.isTeacherBusy(targetTeacher, source.date, source.time)) {
+        // 检查目标教师在源时间是否有其他安排（排除自己当前的这个安排）
+        const targetTeacherHasOtherArrangement = GRADE_LIST.some(g => {
+          return Store.gradeData[g].arrangements.some(a => {
+            // 检查是否是同一天同一时间
+            if (a.date === source.date && a.time === source.time) {
+              // 排除源单元格本身（因为目标教师将要移动到这里）
+              const isSourceCell = (g === source.grade && a.room == source.room);
+              // 排除目标单元格本身（因为目标教师将要离开这里）
+              const isTargetCell = (g === target.targetGrade && a.date === target.targetDate && 
+                                   a.time === target.targetTime && a.room == target.targetRoom);
+              return a.teachers.includes(targetTeacher) && !isSourceCell && !isTargetCell;
+            }
+            return false;
+          });
+        });
+        
+        if (targetTeacherHasOtherArrangement) {
           alert(`教师【${targetTeacher}】此时段已有安排！`);
           return;
         }
@@ -834,8 +863,19 @@
           sourceArr.teachers.push(targetTeacher);
         }
       } else {
-        // 修复点4：检查移动时目标时间是否冲突
-        if (Utils.isTeacherBusy(source.name, target.targetDate, target.targetTime)) {
+        // 移动到空单元格时的冲突检查也需要排除自己当前的安排
+        const sourceTeacherHasOtherArrangement = GRADE_LIST.some(g => {
+          return Store.gradeData[g].arrangements.some(a => {
+            if (a.date === target.targetDate && a.time === target.targetTime) {
+              const isSourceCell = (g === source.grade && a.date === source.date && 
+                                   a.time === source.time && a.room == source.room);
+              return a.teachers.includes(source.name) && !isSourceCell;
+            }
+            return false;
+          });
+        });
+        
+        if (sourceTeacherHasOtherArrangement) {
           alert(`教师【${source.name}】此时段已有安排！`);
           return;
         }
@@ -863,7 +903,18 @@
     },
     
     handleAddFromPanel(teacherName, target, per) {
-      if (Utils.isTeacherBusy(teacherName, target.targetDate, target.targetTime)) {
+      // 检查冲突，排除目标单元格本身
+      const hasConflict = GRADE_LIST.some(g => {
+        return Store.gradeData[g].arrangements.some(a => {
+          if (a.date === target.targetDate && a.time === target.targetTime) {
+            const isTargetCell = (g === target.targetGrade && a.room == target.targetRoom);
+            return a.teachers.includes(teacherName) && !isTargetCell;
+          }
+          return false;
+        });
+      });
+      
+      if (hasConflict) {
         alert(`教师【${teacherName}】此时段已有安排！`);
         return;
       }
@@ -917,8 +968,8 @@
       UIRenderer.clearAllHighlights();
     }
   };
-  
-  /* ========== 6. 编排算法模块（优化版） ========== */
+
+/* ========== 6. 编排算法模块（优化版） ========== */
   const ExamArranger = {
     arrangeAllGrades() {
       if (!confirm('确定自动编排所有年级？')) return;
