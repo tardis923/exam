@@ -66,7 +66,7 @@
     <input type="number" id="maxCount" value="6" min="1" max="20" class="w-14 border p-1">
   </div>
 <button id="showHelp" class="bg-yellow-500 text-white px-3 py-1 rounded">📖 使用说明</button>  
-<button id="autoAll" class="bg-green-600 text-white px-3 py-1 rounded">✅ 自动编排所有年级</button>
+<button id="autoAll" class="bg-green-600 text-white px-3 py-1 rounded">✅ 自动编排</button>
   
   <label class="bg-teal-600 text-white px-3 py-1 rounded cursor-pointer">
     📋 导入考试配置
@@ -77,10 +77,10 @@
     📄 上传样式模板
     <input type="file" id="uploadTemplate" accept=".xlsx" class="hidden">
   </label>
-  <button id="exportAllGrades" class="bg-teal-600 text-white px-3 py-1 rounded">📊 自适应导出</button>
+  <button id="exportAllGrades" class="bg-teal-600 text-white px-3 py-1 rounded">📊 导出监考表</button>
   
   <button id="clearAllArrangements" class="bg-red-600 text-white px-3 py-1 rounded">🗑️ 清空所有编排</button>
-  <button id="backupAll" class="bg-blue-600 text-white px-3 py-1 rounded">💾 备份全年级</button>
+  <button id="backupAll" class="bg-blue-600 text-white px-3 py-1 rounded">💾 备份数据</button>
   <button id="restoreAll" class="bg-purple-600 text-white px-3 py-1 rounded">📂 恢复备份</button>
   <input type="file" id="restoreFile" accept=".json" class="hidden">
   
@@ -137,7 +137,7 @@
 
 <!-- 右侧固定教师总表面板 -->
 <div class="fixed right-2 top-24 w-56 bg-white p-2 rounded shadow z-50" style="height:80vh;">
-  <h3 class="font-bold text-center text-blue-600 mb-2 text-sm">全年级教师总表</h3>
+  <h3 class="font-bold text-center text-blue-600 mb-2 text-sm">全年级教师</h3>
   <input id="searchAllTeacher" placeholder="搜索教师" class="w-full border p-1 text-sm mb-1">
   <div class="flex gap-1 mb-1">
     <select id="filterGrade" class="w-full border p-1 text-sm">
